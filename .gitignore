@@ -1,0 +1,7 @@
+.venv/
+node_modules/
+web/dist/
+__pycache__/
+logs/
+games/
+.env
