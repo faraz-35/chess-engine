@@ -240,9 +240,10 @@ class Session:
                     rec.badge = ("book" if book_hit and book_hit.exact
                                  else quality.classify(pre_cp, post_cp, mv == best))
                     if rec.badge in ("mistake", "blunder") and pre:
-                        key, text = quality.reason_text(board_before, board.copy(), mover,
-                                                        pre[0], rec.pv, post_cp)
-                        rec.reason_key, rec.reason = key, text
+                        found = quality.reason_text(board_before, board.copy(), mover,
+                                                    pre[0], rec.pv, post_cp)
+                        if found is not None:
+                            rec.reason_key, rec.reason = found
                     if pending_engine is not None:
                         pending_engine.eval_cp = pre_cp       # eval after the engine's move
                         pending_engine = None
