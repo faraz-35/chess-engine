@@ -132,6 +132,7 @@ export default function App() {
   }, []);
   const [drill, setDrill] = useState<Drill | null>(null);
   const [line, setLine] = useState<LineState | null>(null);
+  const [manualBetter, setManualBetter] = useState<boolean | null>(null); // null = automatic
   const [explore, setExplore] = useState<{ fen: string; result: ExploreResult } | null>(null);
   const [step, setStep] = useState<StepMove | null>(null);
   const exploreCache = useRef<Map<string, ExploreResult>>(new Map());
@@ -170,6 +171,14 @@ export default function App() {
     : rec;
   const reviewing = progress != null;
   const finished = session?.status === "finished";
+  // On a reviewed mistake the better plan is the story — show it by default.
+  const autoBetter = Boolean(
+    !live && session?.reviewed && rec && !rec.byEngine
+    && (rec.badge === "mistake" || rec.badge === "blunder" || rec.badge === "inaccuracy")
+    && rec.bestUci && rec.bestUci !== rec.uci && rec.bestPv.length > 0
+    && !drill && !line,
+  );
+  const showBetter = manualBetter ?? autoBetter;
 
   const startGame = useCallback(async () => {
     setToasts([]);
@@ -186,6 +195,7 @@ export default function App() {
       setDrill(null);
       setLine(null);
       setExplore(null);
+      setManualBetter(null);
     } catch (e) {
       notify(String(e));
     } finally {
@@ -208,6 +218,8 @@ export default function App() {
         (m) => !m.byEngine && (m.badge === "mistake" || m.badge === "blunder"),
       );
       setStep(null);
+      setStep(null);
+      setManualBetter(null);
       setSel(firstBad ? firstBad.ply : s.moves.length - 1);
     } catch (e) {
       notify(String(e));
@@ -244,6 +256,7 @@ export default function App() {
       setDrill(null);
       setLine(null);
       setExplore(null);
+      setManualBetter(null);
     },
     [session, moves, lastPly, selPly],
   );
@@ -416,6 +429,7 @@ export default function App() {
       if (!rec) return;
       setDrill(null);
       if (kind === "better") {
+        setManualBetter(true);
         setLine({
           baseFen: rec.fenBefore,
           uci: rec.bestPv,
@@ -543,7 +557,7 @@ export default function App() {
       return list;
     }
     return settings.openingHints ? (session?.bookArrows ?? []).map((u) => arrow(u, "book")) : [];
-  }, [drill, line, explore, displayFen, rec, session, settings]);
+  }, [drill, line, explore, displayFen, showBetter, rec, session, settings]);
 
   const board = useMemo(() => {
     if (!session) return null;
@@ -553,6 +567,10 @@ export default function App() {
       return { fen: pos.fen, last: pos.last, dests: destsFromFen(pos.fen), check: new Chess(pos.fen).isCheck() };
     }
     const atLive = rec != null && rec.ply === lastPly && session.status === "playing" && sel == null;
+    if (showBetter && rec) {
+      // The better plan: the position where it was your move, best arrow drawn.
+      return { fen: rec.fenBefore, last: null, dests: destsFromFen(rec.fenBefore), check: new Chess(rec.fenBefore).isCheck() };
+    }
     if (rec) {
       // Any browsed position is a tangent board: moves for either side are
       // allowed there and only land in the scratch branch.
@@ -565,7 +583,7 @@ export default function App() {
       };
     }
     return { fen: session.fen, last: session.lastMove, dests: session.dests, check: session.check };
-  }, [session, drill, line, rec, lastPly, sel]);
+  }, [session, drill, line, rec, lastPly, sel, showBetter]);
 
   const tabsNav = (
     <nav className="tabs">
@@ -853,6 +871,8 @@ export default function App() {
                 coachText={coachAllowed ? (coach[keyRec.ply] ?? null) : null}
                 inLine={line != null}
                 minimal={(!session.reviewed && !live) || !settings.liveGrades}
+                showingBetter={showBetter && rec?.ply === keyRec.ply}
+                onToggleBetter={() => setManualBetter(!showBetter)}
                 onStartLine={openLine}
                 onDrill={startDrill}
               />

@@ -8,12 +8,14 @@ interface Props {
   coachText: string | null;
   inLine: boolean;
   minimal?: boolean; // browsing an unreviewed game: no engine judgment shown
+  showingBetter?: boolean; // board is flipped to the position before this move
+  onToggleBetter?: () => void;
   onStartLine: (kind: "actual" | "better") => void;
   onDrill: () => void;
 }
 
 export default function KeyCard({
-  rec, playerColor, coachText, inLine, minimal, onStartLine, onDrill,
+  rec, playerColor, coachText, inLine, minimal, showingBetter, onToggleBetter, onStartLine, onDrill,
 }: Props) {
   const badge = rec.badge ? BADGE[rec.badge] : null;
   if (minimal) {
@@ -52,15 +54,26 @@ export default function KeyCard({
       {hasBetter && !bad && (
         <p className="kc-best">Better was <b>{rec.bestSan}</b>.</p>
       )}
-      {(hasBetter || (bad && rec.pvSan.length > 0)) && !inLine && (
+      {showingBetter ? (
         <div className="kc-actions">
-          {hasBetter && (
-            <button onClick={() => onStartLine("better")}>
-              {bad ? "See the better line" : "See the better move"}
-            </button>
+          {onToggleBetter && <button onClick={onToggleBetter}>Back to your move</button>}
+          {rec.bestPvSan.length > 1 && (
+            <button onClick={() => onStartLine("better")}>Step through the best line</button>
           )}
-          {bad && <button className="accent" onClick={onDrill}>Try it yourself</button>}
         </div>
+      ) : (
+        <>
+          {(hasBetter || (bad && rec.pvSan.length > 0)) && !inLine && (
+            <div className="kc-actions">
+              {hasBetter && (
+                <button onClick={() => onStartLine("better")}>
+                  {bad ? "See the better line" : "See the better move"}
+                </button>
+              )}
+              {bad && <button className="accent" onClick={onDrill}>Try it yourself</button>}
+            </div>
+          )}
+        </>
       )}
       {!inLine && !rec.byEngine && rec.pvSan.length > 1 && (
         <button className="kc-line-btn" onClick={() => onStartLine("actual")}>
