@@ -337,6 +337,13 @@ export default function App() {
 
   const resign = useCallback(async () => {
     if (!session || finished) return;
+    // If the engine's staged reply is still pending, drop it — the resign response
+    // already carries the full move list, so nothing is lost.
+    if (stageTimer.current != null) {
+      window.clearTimeout(stageTimer.current);
+      stageTimer.current = null;
+      setBusy(false);
+    }
     try {
       const next = await api.resign(session.id);
       setSession(next);
