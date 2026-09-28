@@ -143,6 +143,7 @@ export default function App() {
   const [confirmResign, setConfirmResign] = useState(false);
   const [modalClosed, setModalClosed] = useState<string | null>(null);
   const stageTimer = useRef<number | null>(null);
+  const navigatedRef = useRef<(() => void) | null>(null);
   const toastId = useRef(0);
 
   const notify = useCallback((text: string, tone: Toast["tone"] = "error") => {
@@ -235,6 +236,9 @@ export default function App() {
 
   const startReview = useCallback(async () => {
     if (!session || progress != null) return;
+    const selAtStart = sel;
+    let navigated = false;
+    navigatedRef.current = () => { navigated = true; };
     setProgress("Preparing…");
     setDrill(null);
     setLine(null);
@@ -249,15 +253,16 @@ export default function App() {
         (m) => !m.byEngine && (m.badge === "mistake" || m.badge === "blunder"),
       );
       setStep(null);
-      setStep(null);
       setManualBetter(null);
-      setSel(firstBad ? firstBad.ply : s.moves.length - 1);
+      // If the user browsed during the review, respect where they stopped.
+      setSel(navigated ? (selAtStart != null ? Math.min(selAtStart, s.moves.length - 1) : null)
+                        : (firstBad ? firstBad.ply : s.moves.length - 1));
     } catch (e) {
       notify(String(e));
     } finally {
       setProgress(null);
     }
-  }, [session, progress]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [session, progress, sel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Optional: review automatically when a game ends (Settings).
   useEffect(() => {
@@ -269,6 +274,7 @@ export default function App() {
   const jump = useCallback(
     (ply: number) => {
       if (!session || !moves.length) return;
+      if (progress != null && navigatedRef.current) navigatedRef.current();
       const target = Math.max(0, Math.min(session.moves.length - 1, ply));
       // Stepping exactly one ply forward animates the move on the board;
       // landing on the live position returns to the real game.
@@ -487,7 +493,7 @@ export default function App() {
         setSel(null);
         return;
       }
-      if (!session || !moves.length || reviewing) return;
+      if (!session || !moves.length) return;
       if (line) {
         if (e.key === "ArrowRight") setLine((l) => (l && l.index < l.uci.length - 1 ? { ...l, index: l.index + 1 } : l));
         if (e.key === "ArrowLeft") setLine((l) => (l && l.index >= 0 ? { ...l, index: l.index - 1 } : l));

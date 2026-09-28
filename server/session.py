@@ -26,7 +26,7 @@ log = logging.getLogger("chess.session")
 
 PLAY_DEPTH = 12
 REVIEW_DEPTH = 14
-REVIEW_SEARCH_CAP_S = 20  # hard per-search cap: a review can never run away
+REVIEW_SEARCH_CAP_S = 10  # hard per-search cap: a review can never run away
 PLAY_MOVETIME = 0.35
 PV_KEEP = 6
 
@@ -335,11 +335,15 @@ class Session:
                 ply, rec, board_before, mv = task
                 return ply, rec, self._review_one(engines, board_before, mv)
 
+            # Report completions as they happen: an ordered stream would freeze
+            # the counter behind one slow position even while others finish.
             with futures.ThreadPoolExecutor(max_workers=min(len(tasks) or 1, ANALYSER_WORKERS)) as pool:
-                for ply, rec, fields in pool.map(analyse_task, tasks):
+                pending = {pool.submit(analyse_task, t): t[0] for t in tasks}
+                for fut in futures.as_completed(pending):
+                    ply, rec, fields = fut.result()
                     self._apply_review(rec, fields)
                     done_count += 1
-                    yield {"ply": ply, "done": done_count, "total": total}
+                    yield {"done": done_count, "total": total}
 
             # Engine moves take their eval from the following player analysis
             # (positions in between are never searched).

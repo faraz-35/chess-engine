@@ -130,10 +130,8 @@ export const api = {
         } else if (msg.done === true) {
           stream.close();
           resolve(msg.state);
-        } else if (msg.ply !== undefined) {
-          onProgress(msg.ply + 1, msg.total);
-        } else if (msg.total !== undefined) {
-          onProgress(0, msg.total);
+        } else if (msg.done !== undefined && msg.total !== undefined) {
+          onProgress(msg.done, msg.total);
         }
       };
       stream.onerror = () => {
