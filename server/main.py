@@ -227,13 +227,11 @@ def practice_check(body: PracticeCheckIn):
 @app.get("/api/review/{sid}")
 def review(sid: str):
     session = session_or_404(sid)
-    total = len(session.moves)
 
     def gen():
-        yield f"data: {json.dumps({'total': total})}\n\n"
         try:
-            for ply in session.review(engines()):
-                yield f"data: {json.dumps({'ply': ply, 'total': total})}\n\n"
+            for event in session.review(engines()):
+                yield f"data: {json.dumps(event)}\n\n"
             yield f"data: {json.dumps({'done': True, 'state': session.payload()})}\n\n"
         except Exception as exc:
             log.exception("review failed")

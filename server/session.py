@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import threading
+from concurrent import futures
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -18,12 +19,13 @@ import chess.pgn
 
 from . import quality
 from .config import GAMES_DIR
+from .engine import ANALYSER_WORKERS
 from .openings import Openings
 
 log = logging.getLogger("chess.session")
 
 PLAY_DEPTH = 12
-REVIEW_DEPTH = 16
+REVIEW_DEPTH = 14
 PLAY_MOVETIME = 0.35
 PV_KEEP = 6
 
@@ -213,50 +215,45 @@ class Session:
     # ---------- review (player moves only) ----------
 
     def review(self, engines):
-        """Re-score every player move at higher depth; yields ply numbers for progress."""
+        """Re-score every player move in parallel; yields progress events."""
         with self._lock:
+            # Snapshot the tasks first: one worker = one player move with its own
+            # board copy, so no shared state crosses threads.
             board = chess.Board()
-            pending_engine: MoveRec | None = None
+            tasks: list[tuple[int, MoveRec, chess.Board, chess.Move]] = []
             for rec in self.moves:
                 mv = chess.Move.from_uci(rec.uci)
-                mover = board.turn
-                board_before = board.copy()
+                if board.turn == self.player_color:
+                    tasks.append((rec.ply, rec, board.copy(), mv))
                 board.push(mv)
-                if mover == self.player_color:
-                    pre = engines.analyse(board_before, REVIEW_DEPTH, multipv=2)
-                    best = pre[0]["pv"][0] if pre else None
-                    pre_cp = quality.score_to_cp(pre[0]["score"], mover) if pre else 0
-                    over = board.is_game_over()
-                    post = [] if over else engines.analyse(board, REVIEW_DEPTH, multipv=2)
-                    post_cp = (quality.terminal_cp(board, mover) if over
-                               else quality.score_to_cp(post[0]["score"], mover))
-                    rec.pre_cp = pre_cp
-                    rec.best_uci = best.uci() if best else None
-                    rec.best_san = board_before.san(best) if best else None
-                    rec.eval_cp = post_cp                     # mover == player -> already player POV
-                    rec.pv = [u.uci() for u in post[0]["pv"][:PV_KEEP]] if post else []
-                    rec.pv_san = _san_line(board, rec.pv)
-                    if pre:
-                        rec.best_pv = [u.uci() for u in pre[0]["pv"][:PV_KEEP]]
-                        rec.best_pv_san = _san_line(board_before, rec.best_pv)
-                    book_hit = self._book.lookup(self.uci_seq()[: rec.ply + 1])
-                    rec.badge = ("book" if book_hit and book_hit.exact
-                                 else quality.classify(pre_cp, post_cp, mv == best))
-                    if rec.badge in ("mistake", "blunder") and pre:
-                        found = quality.reason_text(board_before, board.copy(), mover,
-                                                    pre[0], rec.pv, post_cp)
-                        if found is not None:
-                            rec.reason_key, rec.reason = found
-                    if pending_engine is not None:
-                        pending_engine.eval_cp = pre_cp       # eval after the engine's move
-                        pending_engine = None
-                else:
-                    if board.is_game_over():
-                        rec.eval_cp = quality.to_player_pov(
-                            quality.terminal_cp(board, mover), mover, self.player_color)
-                    else:
-                        pending_engine = rec
-                yield rec.ply
+            total = len(tasks)
+            yield {"total": total}
+
+            done_count = 0
+            def analyse_task(task):
+                ply, rec, board_before, mv = task
+                return ply, rec, self._review_one(engines, board_before, mv)
+
+            with futures.ThreadPoolExecutor(max_workers=min(len(tasks) or 1, ANALYSER_WORKERS)) as pool:
+                for ply, rec, fields in pool.map(analyse_task, tasks):
+                    self._apply_review(rec, fields)
+                    done_count += 1
+                    yield {"ply": ply, "done": done_count, "total": total}
+
+            # Engine moves take their eval from the following player analysis
+            # (positions in between are never searched).
+            board = chess.Board()
+            for i, rec in enumerate(self.moves):
+                mover = board.turn
+                board.push(chess.Move.from_uci(rec.uci))
+                if not rec.by_engine:
+                    continue
+                if board.is_game_over():
+                    rec.eval_cp = quality.to_player_pov(
+                        quality.terminal_cp(board, mover), mover, self.player_color)
+                elif i + 1 < len(self.moves) and self.moves[i + 1].pre_cp is not None:
+                    rec.eval_cp = self.moves[i + 1].pre_cp
+
             self._summary = self._compute_summary()
             self.reviewed = True
             path = self._save_pgn()
@@ -265,7 +262,55 @@ class Session:
                 "opening": next((r.opening for r in reversed(self.moves) if r.opening), None),
                 "result": self.result,
             }))
-            log.info("review %s done (%d moves)", self.id, len(self.moves))
+            log.info("review %s done (%d moves, %d player positions)", self.id, len(self.moves), total)
+
+    def _review_one(self, engines, board_before: chess.Board, mv: chess.Move) -> dict:
+        """Deep analysis of one player move. Runs on a worker thread."""
+        mover = board_before.turn
+        worker = self._next_worker()
+        pre = engines.analyse_parallel(worker, board_before, REVIEW_DEPTH)
+        best = pre[0]["pv"][0] if pre else None
+        pre_cp = quality.score_to_cp(pre[0]["score"], mover) if pre else 0
+        board_after = board_before.copy()
+        board_after.push(mv)
+        over = board_after.is_game_over()
+        if over:
+            post_cp = quality.terminal_cp(board_after, mover)
+            post: list[dict] = []
+        else:
+            post = engines.analyse_parallel(worker, board_after, REVIEW_DEPTH)
+            post_cp = quality.score_to_cp(post[0]["score"], mover) if post else 0
+        badge = quality.classify(pre_cp, post_cp, mv == best)
+        fields = {
+            "pre_cp": pre_cp,
+            "best_uci": best.uci() if best else None,
+            "best_san": board_before.san(best) if best else None,
+            "eval_cp": post_cp,
+            "pv": [u.uci() for u in post[0]["pv"][:PV_KEEP]] if post else [],
+            "badge": badge,
+        }
+        fields["pv_san"] = _san_line(board_after, fields["pv"])
+        if pre:
+            best_pv = [u.uci() for u in pre[0]["pv"][:PV_KEEP]]
+            fields["best_pv"] = best_pv
+            fields["best_pv_san"] = _san_line(board_before, best_pv)
+        else:
+            fields["best_pv"], fields["best_pv_san"] = [], []
+        if badge in ("mistake", "blunder") and pre:
+            found = quality.reason_text(board_before, board_after, mover, pre[0], fields["pv"], post_cp)
+            if found is not None:
+                fields["reason_key"], fields["reason"] = found
+        return fields
+
+    def _next_worker(self) -> int:
+        self._worker_i = (getattr(self, "_worker_i", 0) + 1) % ANALYSER_WORKERS
+        return self._worker_i
+
+    def _apply_review(self, rec: MoveRec, fields: dict) -> None:
+        for key, value in fields.items():
+            setattr(rec, key, value)
+        book_hit = self._book.lookup(self.uci_seq()[: rec.ply + 1])
+        rec.badge = ("book" if book_hit and book_hit.exact else rec.badge)
 
     def _compute_summary(self) -> dict:
         counts: dict[str, int] = {}

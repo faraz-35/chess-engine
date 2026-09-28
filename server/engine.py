@@ -12,8 +12,9 @@ from .config import MAIA3_MODEL, MAIA3_UCI, STOCKFISH_PATH
 
 log = logging.getLogger("chess.engines")
 
-ANALYSIS_THREADS = 4
+ANALYSIS_THREADS = 3
 ANALYSIS_HASH_MB = 256
+ANALYSER_WORKERS = 3   # review analyses run across this many Stockfish processes
 PLAY_MOVETIME = 0.35
 MAIA_PLAY_NODES = 1
 
@@ -29,6 +30,10 @@ class Engines:
     separate UCI process and is spawned lazily on the first Maia game.
     The analysis engine is always Stockfish — Maia's outputs are move
     predictions, not search evaluations.
+
+    Review analyses positions in parallel across ANALYSER_WORKERS identical
+    Stockfish processes; analyse_parallel(idx, ...) routes to worker idx with
+    its own lock (a SimpleEngine serves one search at a time).
     """
 
     def __init__(self, path: str = STOCKFISH_PATH):
@@ -36,11 +41,18 @@ class Engines:
         self._play = chess.engine.SimpleEngine.popen_uci(path)
         self._analyse = chess.engine.SimpleEngine.popen_uci(path)
         self._analyse.configure({"Threads": ANALYSIS_THREADS, "Hash": ANALYSIS_HASH_MB})
+        self._analysers = [self._analyse]
+        self._analyser_locks = [threading.Lock()]
+        for _ in range(ANALYSER_WORKERS - 1):
+            worker = chess.engine.SimpleEngine.popen_uci(path)
+            worker.configure({"Threads": ANALYSIS_THREADS, "Hash": ANALYSIS_HASH_MB})
+            self._analysers.append(worker)
+            self._analyser_locks.append(threading.Lock())
         self._skill = -1
         self._maia: chess.engine.SimpleEngine | None = None
         self._maia_elo = -1
         atexit.register(self.quit)
-        log.info("stockfish ready (%s)", path)
+        log.info("stockfish ready (%s), %d analysis workers", path, ANALYSER_WORKERS)
 
     def set_skill(self, skill: int) -> None:
         with self._lock:
@@ -72,14 +84,19 @@ class Engines:
         return self._maia.play(board, chess.engine.Limit(nodes=MAIA_PLAY_NODES)).move
 
     def analyse(self, board: chess.Board, depth: int, multipv: int = 1) -> list[dict]:
-        """Best lines for the side to move, scores relative to it."""
-        with self._lock:
+        """Best lines for the side to move, scores relative to it (worker 0)."""
+        return self.analyse_parallel(0, board, depth, multipv)
+
+    def analyse_parallel(self, worker: int, board: chess.Board, depth: int, multipv: int = 1) -> list[dict]:
+        """Analyse on the given worker process (each serves one search at a time)."""
+        engine = self._analysers[worker % len(self._analysers)]
+        with self._analyser_locks[worker % len(self._analyser_locks)]:
             if board.is_game_over():
                 return []
-            return list(self._analyse.analyse(board, chess.engine.Limit(depth=depth), multipv=multipv))
+            return list(engine.analyse(board, chess.engine.Limit(depth=depth), multipv=multipv))
 
     def quit(self) -> None:
-        for engine in (self._play, self._analyse, self._maia):
+        for engine in (self._play, *self._analysers, self._maia):
             try:
                 if engine:
                     engine.quit()

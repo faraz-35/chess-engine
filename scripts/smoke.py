@@ -47,7 +47,7 @@ def main() -> int:
 
     review_text = client.get(f"/api/review/{state['id']}").text
     events = [json.loads(line[6:]) for line in review_text.splitlines() if line.startswith("data: ")]
-    done = [e for e in events if e.get("done")]
+    done = [e for e in events if e.get("done") is True]
     check("review done", len(done) == 1, f"{len(events)} events")
     if done:
         state = done[0]["state"]
@@ -101,7 +101,7 @@ def main() -> int:
     check("resign finishes the game", state["status"] == "finished" and state["result"] == "1-0")
     review_text = client.get(f"/api/review/{black_game['id']}").text
     events = [json.loads(line[6:]) for line in review_text.splitlines() if line.startswith("data: ")]
-    done = [e for e in events if e.get("done")]
+    done = [e for e in events if e.get("done") is True]
     check("review after resign", len(done) == 1 and done[0]["state"]["reviewed"] is True
           and done[0]["state"]["summary"] is not None)
 
