@@ -21,7 +21,7 @@ function Trend({ values }: { values: number[] }) {
   );
 }
 
-export default function Progress({ onPractice }: { onPractice: () => void }) {
+export default function Progress({ onPractice, onOpenGame }: { onPractice: () => void; onOpenGame: (file: string) => void }) {
   const [stats, setStats] = useState<Stats | null>(null);
 
   useEffect(() => {
@@ -114,7 +114,7 @@ export default function Progress({ onPractice }: { onPractice: () => void }) {
         <h1>Recent games</h1>
         <div className="games-list">
           {stats.games.map((g) => (
-            <div className="game-row" key={g.file}>
+            <button className="game-row clickable" key={g.file} onClick={() => onOpenGame(g.file)}>
               <span className={`outcome ${g.outcome ?? "na"}`}>
                 {g.outcome == null ? "·" : g.outcome === "win" ? "W" : g.outcome === "loss" ? "L" : "D"}
               </span>
@@ -131,9 +131,10 @@ export default function Progress({ onPractice }: { onPractice: () => void }) {
                   ) : null,
                 )}
               </span>
+              {g.reviewed ? <span className="reviewed-tag">reviewed</span> : <span className="reviewed-tag no">not reviewed</span>}
               <span className="game-acc">{g.accuracy != null ? `${g.accuracy}` : ""}</span>
               <span className="game-date">{g.date}</span>
-            </div>
+            </button>
           ))}
         </div>
       </section>

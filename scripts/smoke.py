@@ -113,6 +113,13 @@ def main() -> int:
         "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "uci": "e2e4"}).json()
     check("practice check", pc.get("badge") in ("best", "excellent", "good"), str(pc.get("badge")))
 
+    games = client.get("/api/games").json().get("games", [])
+    check("games list", len(games) >= 1, f"{len(games)} on disk")
+    if games:
+        loaded = client.post("/api/games/load", json={"file": games[0]["file"]}).json()
+        check("load past game", "moves" in loaded and loaded.get("status") == "finished",
+              f"{len(loaded.get('moves', []))} moves, reviewed={loaded.get('reviewed')}")
+
     if health.get("maia"):
         maia = client.post("/api/new", json={"skill": 6, "color": "white", "opponent": "maia", "elo": 1150}).json()
         check("maia game starts", maia.get("opponent") == "maia")

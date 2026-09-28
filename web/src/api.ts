@@ -54,6 +54,21 @@ export interface StatsGame {
   counts: Record<string, number>;
   opening: string | null;
   plies: number;
+  reviewed: boolean;
+}
+
+export interface GameSummary {
+  file: string;
+  date: string;
+  opponent: string;
+  opponentKind: string;
+  color: string;
+  result: string;
+  outcome: "win" | "loss" | "draw" | null;
+  opening: string | null;
+  accuracy: number | null;
+  reviewed: boolean;
+  plies: number;
 }
 
 export interface Stats {
@@ -78,6 +93,10 @@ export const api = {
   explore: (fen: string) => post<ExploreResult>("/api/explore", { fen }),
 
   stats: async (): Promise<Stats> => (await fetch("/api/stats")).json(),
+
+  games: async (): Promise<GameSummary[]> => (await fetch("/api/games")).json().then((r) => r.games),
+
+  loadGame: (file: string) => post<GameState>("/api/games/load", { file }),
 
   practice: async (): Promise<PracticeItem[]> => (await fetch("/api/practice")).json().then((r) => r.items),
 

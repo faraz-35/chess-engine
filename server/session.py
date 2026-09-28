@@ -111,6 +111,7 @@ class Session:
         self.result: str | None = None
         self.resigned = False
         self.created = datetime.now()
+        self.source_path = None
         self._book = book
         self._lock = threading.Lock()
         self._turn_info: list[dict] | None = None   # analysis of the current player-to-move position
@@ -212,6 +213,105 @@ class Session:
     def uci_seq(self) -> list[str]:
         return [r.uci for r in self.moves]
 
+
+    # ---------- loading a saved game ----------
+
+    @classmethod
+    def load(cls, sid: str, path, book: Openings) -> "Session":
+        """Rebuild a finished session from its PGN (+ sidecar review data)."""
+        import json as _json
+        from datetime import datetime as _dt
+
+        with path.open() as handle:
+            game = chess.pgn.read_game(handle)
+        if game is None or not game.next():
+            raise ValueError("unreadable game")
+
+        headers = game.headers
+        player_color = chess.WHITE if headers.get("White", "Faraz") == "Faraz" else chess.BLACK
+        opponent = headers.get("Black" if player_color == chess.WHITE else "White", "")
+
+        sidecar = {}
+        side_path = path.with_suffix(".json")
+        if side_path.exists():
+            try:
+                sidecar = _json.loads(side_path.read_text())
+            except _json.JSONDecodeError:
+                sidecar = {}
+        side_moves = {m["ply"]: m for m in sidecar.get("moves", [])}
+
+        opponent_kind = "maia" if opponent.startswith("Maia") else "stockfish"
+        if opponent_kind == "maia":
+            try:
+                skill, elo = 6, int(opponent.rsplit("-", 1)[1])
+            except (IndexError, ValueError):
+                skill, elo = 6, 1150
+        else:
+            try:
+                skill, elo = int(opponent.rsplit("-", 1)[1]), 1150
+            except (IndexError, ValueError):
+                skill, elo = 6, 1150
+
+        raw = path.stem[:15]  # YYYYMMDD-HHMMSS
+        try:
+            created = _dt.strptime(raw, "%Y%m%d-%H%M%S")
+        except ValueError:
+            created = _dt.now()
+
+        session = cls(sid, skill, player_color, book, opponent=opponent_kind, elo=elo)
+        session.source_path = path
+        session.created = created
+        session.result = headers.get("Result", "*") or None
+        session.resigned = headers.get("Termination") == "Resignation"
+        session.moves = []
+
+        board = game.board()
+        for node in game.mainline():
+            mover = board.turn
+            uci = node.move.uci()
+            fen_before = board.fen()
+            san = board.san(node.move)
+            board.push(node.move)
+            by_engine = mover != player_color
+            side = side_moves.get(len(session.moves), {})
+            badge, reason, reason_key, best_san, best_uci = None, None, None, None, None
+            if not by_engine:
+                if side:
+                    badge = side.get("badge")
+                else:
+                    import re as _re
+                    m = _re.search(r"\[([A-Za-z]+)\]", node.comment or "")
+                    if m:
+                        badge = {info["label"].lower(): key for key, info
+                                 in quality.BADGES.items()}.get(m.group(1).lower())
+                        bm = _re.search(r"\bbest\s+(\S+)", node.comment or "")
+                        if bm:
+                            best_san = bm.group(1)
+            rec = MoveRec(
+                ply=len(session.moves), uci=uci, san=san, by_engine=by_engine,
+                fen_before=fen_before, fen_after=board.fen(),
+                badge=badge if not by_engine else None,
+                eval_cp=side.get("evalCp"),
+                pre_cp=side.get("preCp") if not by_engine else None,
+                best_uci=side.get("bestUci") or best_uci,
+                best_san=side.get("bestSan") or best_san,
+                reason=side.get("reason"), reason_key=side.get("reasonKey"),
+            )
+            if side.get("pvSan"):
+                rec.pv_san = side["pvSan"]
+            session.moves.append(rec)
+        session.board = board
+        session.reviewed = bool(sidecar.get("summary"))
+        session._summary = sidecar.get("summary")
+        hit = book.lookup(session.uci_seq())
+        session.opening = hit
+        if session.moves and hit:
+            session.moves[-1].opening = f"{hit.eco} {hit.name}"
+        log.info("loaded game %s -> session %s (%d moves, reviewed=%s)",
+                 path.name, sid, len(session.moves), session.reviewed)
+        return session
+
+
     # ---------- review (player moves only) ----------
 
     def review(self, engines):
@@ -261,6 +361,12 @@ class Session:
                 "summary": self._summary,
                 "opening": next((r.opening for r in reversed(self.moves) if r.opening), None),
                 "result": self.result,
+                "moves": [{
+                    "ply": r.ply, "byEngine": r.by_engine, "evalCp": r.eval_cp,
+                    "preCp": r.pre_cp, "badge": r.badge,
+                    "bestUci": r.best_uci, "bestSan": r.best_san,
+                    "reason": r.reason, "reasonKey": r.reason_key,
+                } for r in self.moves],
             }))
             log.info("review %s done (%d moves, %d player positions)", self.id, len(self.moves), total)
 
@@ -442,7 +548,7 @@ class Session:
                     parts.append(rec.reason)
                 node.comment = " ".join(parts)
         GAMES_DIR.mkdir(exist_ok=True)
-        path = GAMES_DIR / f"{self.created:%Y%m%d-%H%M%S}-sf{self.skill}.pgn"
+        path = self.source_path or GAMES_DIR / f"{self.created:%Y%m%d-%H%M%S}-sf{self.skill}.pgn"
         path.write_text(str(game))
         log.info("pgn saved %s", path.name)
         return path

@@ -182,6 +182,37 @@ def explore(body: ExploreIn):
     }
 
 
+@app.get("/api/games")
+def games_list():
+    stats = history.stats(book())
+    return {"games": [
+        {k: g[k] for k in ("file", "date", "opponent", "opponentKind", "color",
+                           "result", "outcome", "opening", "accuracy", "reviewed", "plies")}
+        for g in stats["games"]
+    ]}
+
+
+class LoadGameIn(BaseModel):
+    file: str
+
+
+@app.post("/api/games/load")
+def games_load(body: LoadGameIn):
+    import re as _re
+    if not _re.fullmatch(r"[0-9A-Za-z_-]+", body.file):
+        raise HTTPException(400, "bad file name")
+    path = GAMES_DIR / f"{body.file}.pgn"
+    if not path.exists():
+        raise HTTPException(404, "no such game")
+    sid = secrets.token_hex(4)
+    try:
+        session = Session.load(sid, path, book())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    _sessions[sid] = session
+    return session.payload()
+
+
 @app.get("/api/stats")
 def stats():
     return history.stats(book())

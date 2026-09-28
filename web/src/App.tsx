@@ -10,7 +10,7 @@ import Practice from "./Practice";
 import Progress from "./Progress";
 import SettingsPage from "./SettingsPage";
 import SummaryCard from "./SummaryCard";
-import { api, type ExploreResult } from "./api";
+import { api, type ExploreResult, type GameSummary } from "./api";
 import { arrow, destsFromFen } from "./boardUtils";
 import { fmtEval, moveLabel } from "./format";
 import { loadSettings, saveSettings, type AppSettings } from "./settings";
@@ -139,6 +139,7 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [busy, setBusy] = useState(false);
   const [route, setRoute] = useState<Route>(currentRoute);
+  const [recent, setRecent] = useState<GameSummary[] | null>(null);
   const [confirmResign, setConfirmResign] = useState(false);
   const [modalClosed, setModalClosed] = useState<string | null>(null);
   const stageTimer = useRef<number | null>(null);
@@ -154,6 +155,10 @@ export default function App() {
     const sync = () => setRoute(currentRoute());
     window.addEventListener("hashchange", sync);
     return () => window.removeEventListener("hashchange", sync);
+  }, []);
+
+  useEffect(() => {
+    api.games().then((list) => setRecent(list.slice(0, 6))).catch(() => setRecent([]));
   }, []);
 
   const goto = useCallback((next: Route) => {
@@ -202,6 +207,31 @@ export default function App() {
       setBusy(false);
     }
   }, [skill, color, opponent, elo]);
+
+  const openGame = useCallback(async (file: string) => {
+    setToasts([]);
+    setBusy(true);
+    if (stageTimer.current != null) {
+      window.clearTimeout(stageTimer.current);
+      stageTimer.current = null;
+    }
+    try {
+      const s = await api.loadGame(file);
+      setSession(s);
+      setSel(null);
+      setCoach({});
+      setDrill(null);
+      setLine(null);
+      setExplore(null);
+      setManualBetter(null);
+      setStep(null);
+      goto("play");
+    } catch (e) {
+      notify(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [goto, notify]);
 
   const startReview = useCallback(async () => {
     if (!session || progress != null) return;
@@ -611,7 +641,7 @@ export default function App() {
           )}
         </header>
         {route === "practice" && <Practice orientation={session?.playerColor ?? color} />}
-        {route === "progress" && <Progress onPractice={() => goto("practice")} />}
+        {route === "progress" && <Progress onPractice={() => goto("practice")} onOpenGame={openGame} />}
         {route === "settings" && <SettingsPage settings={settings} onChange={updateSetting} />}
         <div className="toasts">
           {toasts.map((t) => (
@@ -708,6 +738,25 @@ export default function App() {
           <button className="primary big" disabled={busy} onClick={startGame}>
             {busy ? "Starting…" : "Start game"}
           </button>
+          {recent != null && recent.length > 0 && (
+            <div className="field">
+              <span className="field-label">Recent games</span>
+              <div className="recent-list">
+                {recent.map((g) => (
+                  <button key={g.file} className="recent-row" onClick={() => openGame(g.file)}>
+                    <span className={`outcome ${g.outcome ?? "na"}`}>
+                      {g.outcome == null ? "·" : g.outcome === "win" ? "W" : g.outcome === "loss" ? "L" : "D"}
+                    </span>
+                    <span className="recent-what">
+                      vs {g.opponent}
+                      <em>{g.reviewed ? " · reviewed" : ""}{g.opening ? ` · ${g.opening}` : ""}</em>
+                    </span>
+                    <span className="prac-meta">{g.date}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         </div>
         <div className="toasts">

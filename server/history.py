@@ -135,6 +135,7 @@ def parse_game(path, book: Openings) -> dict | None:
         "result": result,
         "outcome": _outcome(result, player_color) if result not in ("*", "") else None,
         "accuracy": (_sidecar(path) or {}).get("summary", {}).get("accuracy"),
+        "reviewed": _sidecar(path) is not None,
         "counts": counts,
         "opening": opening,
         "plies": len(seq),
