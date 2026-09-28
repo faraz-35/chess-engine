@@ -3,13 +3,24 @@ import { Chess } from "chess.js";
 import Board, { type Arrow } from "./Board";
 import EvalBar from "./EvalBar";
 import EvalGraph from "./EvalGraph";
+import GameEnd from "./GameEnd";
 import KeyCard from "./KeyCard";
 import MoveList from "./MoveList";
+import Practice from "./Practice";
+import Progress from "./Progress";
 import SummaryCard from "./SummaryCard";
 import { api, type ExploreResult } from "./api";
+import { arrow, destsFromFen } from "./boardUtils";
 import { fmtEval, moveLabel } from "./format";
 import { sfx } from "./sound";
 import { BADGE, ARROW_COLORS, type Badge, type GameState, type MoveRec } from "./types";
+
+type Route = "play" | "practice" | "progress";
+
+function currentRoute(): Route {
+  const hash = window.location.hash.replace("#/", "");
+  return hash === "practice" || hash === "progress" ? hash : "play";
+}
 
 interface Drill {
   ply: number;
@@ -72,22 +83,6 @@ function linePosition(baseFen: string, uci: string[], index: number): { fen: str
   return { fen: game.fen(), last: last ? [last.slice(0, 2), last.slice(2, 4)] : null };
 }
 
-function arrow(uci: string, brush: string): Arrow {
-  return { orig: uci.slice(0, 2), dest: uci.slice(2, 4), brush };
-}
-
-function destsFromFen(fen: string): Record<string, string[]> {
-  const dests: Record<string, string[]> = {};
-  try {
-    for (const mv of new Chess(fen).moves({ verbose: true })) {
-      (dests[mv.from] ??= []).push(mv.to);
-    }
-  } catch {
-    /* unparsable position: nothing movable */
-  }
-  return dests;
-}
-
 function verdict(s: GameState): { text: string; tone: "win" | "lose" | "draw" } {
   if (s.resigned) return { text: "You resigned.", tone: "lose" };
   if (!s.result) return { text: "Game over.", tone: "draw" };
@@ -110,6 +105,12 @@ function endSound(s: GameState, on: boolean) {
   (v.tone === "win" ? sfx.win : v.tone === "lose" ? sfx.lose : sfx.draw)();
 }
 
+interface Toast {
+  id: number;
+  text: string;
+  tone: "error" | "info";
+}
+
 export default function App() {
   const [session, setSession] = useState<GameState | null>(null);
   const [skill, setSkill] = useState(6);
@@ -125,10 +126,31 @@ export default function App() {
   const [line, setLine] = useState<LineState | null>(null);
   const [explore, setExplore] = useState<{ fen: string; result: ExploreResult } | null>(null);
   const exploreCache = useRef<Map<string, ExploreResult>>(new Map());
-  const [error, setError] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const [busy, setBusy] = useState(false);
+  const [route, setRoute] = useState<Route>(currentRoute);
+  const [confirmResign, setConfirmResign] = useState(false);
+  const [modalClosed, setModalClosed] = useState<string | null>(null);
   const autoReviewed = useRef<string | null>(null);
   const stageTimer = useRef<number | null>(null);
+  const toastId = useRef(0);
+
+  const notify = useCallback((text: string, tone: Toast["tone"] = "error") => {
+    const id = ++toastId.current;
+    setToasts((list) => [...list, { id, text, tone }]);
+    window.setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), 4500);
+  }, []);
+
+  useEffect(() => {
+    const sync = () => setRoute(currentRoute());
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+
+  const goto = useCallback((next: Route) => {
+    window.location.hash = next === "play" ? "" : `/${next}`;
+    setRoute(next);
+  }, []);
 
   const moves = session?.moves ?? [];
   const lastPly = moves.length - 1;
@@ -142,7 +164,7 @@ export default function App() {
   const finished = session?.status === "finished";
 
   const startGame = useCallback(async () => {
-    setError(null);
+    setToasts([]);
     setBusy(true);
     if (stageTimer.current != null) {
       window.clearTimeout(stageTimer.current);
@@ -158,7 +180,7 @@ export default function App() {
       setLine(null);
       setExplore(null);
     } catch (e) {
-      setError(String(e));
+      notify(String(e));
     } finally {
       setBusy(false);
     }
@@ -180,7 +202,7 @@ export default function App() {
       );
       setSel(firstBad ? firstBad.ply : s.moves.length - 1);
     } catch (e) {
-      setError(String(e));
+      notify(String(e));
     } finally {
       setProgress(null);
     }
@@ -245,7 +267,7 @@ export default function App() {
             });
           }
         } catch (e) {
-          setError(String(e));
+          notify(String(e));
         }
         return;
       }
@@ -287,7 +309,7 @@ export default function App() {
             setBusy(false);
           }, 550);
         } catch (e) {
-          setError(String(e));
+          notify(String(e));
           setBusy(false);
         }
         return;
@@ -320,7 +342,7 @@ export default function App() {
           promotion: uci.length > 4 ? uci[4] : undefined,
         });
       } catch {
-        setError("That move is not legal here.");
+        notify("That move is not legal here.");
         return;
       }
       recSound({ san: played.san } as MoveRec, soundOn);
@@ -348,7 +370,7 @@ export default function App() {
       const next = await api.resign(session.id);
       setSession(next);
     } catch (e) {
-      setError(String(e));
+      notify(String(e));
     }
   }, [session, finished]);
 
@@ -360,7 +382,7 @@ export default function App() {
       setExplore(null);
       setDrill({ ply: selPly, fen: d.fen, dests: d.dests, tries: 0, bestUci: null, message: null });
     } catch (e) {
-      setError(String(e));
+      notify(String(e));
     }
   }, [session, selPly, rec]);
 
@@ -510,9 +532,50 @@ export default function App() {
     return { fen: session.fen, last: session.lastMove, dests: session.dests, check: session.check };
   }, [session, drill, line, rec, lastPly]);
 
+  const tabsNav = (
+    <nav className="tabs">
+      {([["play", "Play"], ["practice", "Practice"], ["progress", "Progress"]] as [Route, string][]).map(
+        ([key, label]) => (
+          <button key={key} className={route === key ? "tab on" : "tab"} onClick={() => goto(key)}>
+            {label}
+          </button>
+        ),
+      )}
+    </nav>
+  );
+
+  if (route !== "play") {
+    return (
+      <div className="app">
+        <header>
+          <span className="brand">Chess</span>
+          {tabsNav}
+          <span className="spacer" />
+          {route === "practice" && (
+            <span className="chip subtle">
+              {session ? `as ${session.playerColor}` : "white to move"}
+            </span>
+          )}
+        </header>
+        {route === "practice" && <Practice orientation={session?.playerColor ?? color} />}
+        {route === "progress" && <Progress onPractice={() => goto("practice")} />}
+        <div className="toasts">
+          {toasts.map((t) => (
+            <div key={t.id} className={"toast " + t.tone}>{t.text}</div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   if (!session || !board) {
     return (
-      <div className="center">
+      <div className="app">
+        <header>
+          <span className="brand">Chess</span>
+          {tabsNav}
+        </header>
+        <div className="center">
         <div className="card">
           <h1>Chess</h1>
           <p className="hint">
@@ -592,6 +655,12 @@ export default function App() {
             {busy ? "Starting…" : "Start game"}
           </button>
         </div>
+        </div>
+        <div className="toasts">
+          {toasts.map((t) => (
+            <div key={t.id} className={"toast " + t.tone}>{t.text}</div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -618,38 +687,60 @@ export default function App() {
     <div className="app">
       <header>
         <span className="brand">Chess</span>
-        <span className="chip subtle">{opponentLabel(session)}</span>
-        {v && <span className={`pill ${v.tone}`}>{v.text}</span>}
-        {session.opening && (
-          <span className="opening">
-            {session.opening.eco} {session.opening.name}
-          </span>
+{tabsNav}
+        {route === "play" && (
+          <>
+            <span className="chip subtle">{opponentLabel(session)}</span>
+            {v && <span className={`pill ${v.tone}`}>{v.text}</span>}
+            {session.opening && (
+              <span className="opening">
+                {session.opening.eco} {session.opening.name}
+              </span>
+            )}
+          </>
         )}
         <span className="spacer" />
-        <label className="toggle">
-          <input type="checkbox" checked={coachOn} onChange={(e) => setCoachOn(e.target.checked)} />
-          Coach
-        </label>
-        <button
-          className={soundOn ? "icon-btn on" : "icon-btn"}
-          onClick={() => setSoundOn(!soundOn)}
-          title="Toggle sound"
-        >
-          {soundOn ? "Sound on" : "Sound off"}
-        </button>
-        {!finished && (
-          <button disabled={reviewing || moves.length === 0} onClick={resign}>
-            Resign
-          </button>
+        {route === "play" && (
+          <>
+            <label className="toggle">
+              <input type="checkbox" checked={coachOn} onChange={(e) => setCoachOn(e.target.checked)} />
+              Coach
+            </label>
+            <button
+              className={soundOn ? "icon-btn on" : "icon-btn"}
+              onClick={() => setSoundOn(!soundOn)}
+              title="Toggle sound"
+            >
+              {soundOn ? "Sound on" : "Sound off"}
+            </button>
+            {!finished && (
+              <button
+                className={confirmResign ? "danger" : ""}
+                disabled={reviewing || moves.length === 0}
+                onClick={() => {
+                  if (confirmResign) {
+                    setConfirmResign(false);
+                    void resign();
+                  } else {
+                    setConfirmResign(true);
+                    window.setTimeout(() => setConfirmResign(false), 3500);
+                  }
+                }}
+              >
+                {confirmResign ? "Sure? Click again" : "Resign"}
+              </button>
+            )}
+            {!session.reviewed && moves.length > 0 && (
+              <button disabled={reviewing} onClick={startReview}>
+                Review
+              </button>
+            )}
+            <button className="primary" onClick={startGame}>New game</button>
+          </>
         )}
-        {!session.reviewed && moves.length > 0 && (
-          <button disabled={reviewing} onClick={startReview}>
-            Review
-          </button>
-        )}
-        <button className="primary" onClick={startGame}>New game</button>
       </header>
 
+      {route === "play" && (
       <main>
         <section className="board-area">
           <div className="board-row">
@@ -733,12 +824,23 @@ export default function App() {
           <MoveList moves={moves} activePly={selPly} onJump={jump} />
         </aside>
       </main>
-
-      {error && (
-        <div className="error" onClick={() => setError(null)}>
-          {error} — click to dismiss
-        </div>
       )}
+
+      {finished && session.reviewed && session.summary
+        && modalClosed !== session.id && (
+        <GameEnd
+          session={session}
+          onDismiss={() => setModalClosed(session.id)}
+          onNewGame={() => { setModalClosed(session.id); void startGame(); }}
+          onPractice={() => { setModalClosed(session.id); goto("practice"); }}
+        />
+      )}
+
+      <div className="toasts">
+        {toasts.map((t) => (
+          <div key={t.id} className={"toast " + t.tone}>{t.text}</div>
+        ))}
+      </div>
     </div>
   );
 }

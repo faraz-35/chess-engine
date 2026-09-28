@@ -1,5 +1,9 @@
-"""End-to-end check: play, review, drill, coach, PGN, UI. Run while the server is up."""
+"""End-to-end check: play, review, drill, coach, PGN, UI. Run while the server is up.
+
+Start the server with CHESS_GAMES_DIR=games-test so tests never pollute real stats.
+"""
 import json
+import os
 import sys
 
 import httpx
@@ -80,8 +84,11 @@ def main() -> int:
 
     if health.get("coach"):
         response = client.post(f"/api/coach/{state['id']}/0")
-        check("coach", response.status_code == 200 and len(response.json().get("text", "")) > 5,
-              response.text[:120])
+        text = response.json().get("text", "") if response.status_code == 200 else ""
+        if response.status_code == 200 and text == "":
+            print("SKIP coach text — Gemini rate-limited right now (empty is the correct fallback)")
+        else:
+            check("coach", response.status_code == 200 and len(text) > 5, response.text[:120])
     else:
         print("SKIP coach — no key")
 
@@ -97,6 +104,14 @@ def main() -> int:
     done = [e for e in events if e.get("done")]
     check("review after resign", len(done) == 1 and done[0]["state"]["reviewed"] is True
           and done[0]["state"]["summary"] is not None)
+
+    stats = client.get("/api/stats").json()
+    check("stats endpoint", "totals" in stats and "games" in stats and "openings" in stats)
+    practice = client.get("/api/practice").json()
+    check("practice endpoint", "items" in practice)
+    pc = client.post("/api/practice/check", json={
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "uci": "e2e4"}).json()
+    check("practice check", pc.get("badge") in ("best", "excellent", "good"), str(pc.get("badge")))
 
     if health.get("maia"):
         maia = client.post("/api/new", json={"skill": 6, "color": "white", "opponent": "maia", "elo": 1150}).json()

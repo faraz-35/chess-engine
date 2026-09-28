@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from . import coach, quality
 from . import engine as engine_module
+from . import history
 from .config import GAMES_DIR, LOG_DIR, STOCKFISH_PATH, WEB_DIST
 from .engine import Engines
 from .openings import Openings
@@ -87,6 +88,11 @@ class DrillTryIn(BaseModel):
 
 class ExploreIn(BaseModel):
     fen: str
+
+
+class PracticeCheckIn(BaseModel):
+    fen: str
+    uci: str
 
 
 @app.on_event("startup")
@@ -176,6 +182,48 @@ def explore(body: ExploreIn):
     }
 
 
+@app.get("/api/stats")
+def stats():
+    return history.stats(book())
+
+
+@app.get("/api/practice")
+def practice():
+    return history.practice_items(book())
+
+
+@app.post("/api/practice/check")
+def practice_check(body: PracticeCheckIn):
+    """Grade a candidate move for a position pulled from past games."""
+    try:
+        board = chess.Board(body.fen)
+    except ValueError:
+        raise HTTPException(400, "bad fen")
+    mv = chess.Move.from_uci(body.uci)
+    if mv not in board.legal_moves:
+        raise HTTPException(400, "illegal move")
+    mover = board.turn
+    pre = engines().analyse(board, EXPLORE_DEPTH, multipv=2)
+    if not pre:
+        return {"correct": False, "badge": None, "bestUci": None, "bestSan": None}
+    best = pre[0]["pv"][0]
+    pre_cp = quality.score_to_cp(pre[0]["score"], mover)
+    board_before = board.copy()
+    board.push(mv)
+    over = board.is_game_over()
+    post = [] if over else engines().analyse(board, EXPLORE_DEPTH)
+    post_cp = (quality.terminal_cp(board, mover) if over
+               else quality.score_to_cp(post[0]["score"], mover))
+    badge = quality.classify(pre_cp, post_cp, mv == best)
+    return {
+        "correct": badge in ("best", "excellent"),
+        "badge": badge,
+        "bestUci": best.uci(),
+        "bestSan": board_before.san(best),
+        "evalCp": post_cp,
+    }
+
+
 @app.get("/api/review/{sid}")
 def review(sid: str):
     session = session_or_404(sid)
@@ -221,8 +269,9 @@ async def coach_move(sid: str, ply: int):
         raise HTTPException(400, "bad ply")
     if ply not in session.coach_cache:
         text = await coach.explain(coach_facts(session, ply))
-        session.coach_cache[ply] = text or "No explanation available."
-    return {"ply": ply, "text": session.coach_cache[ply]}
+        if text:
+            session.coach_cache[ply] = text  # failures stay uncached so a retry can succeed
+    return {"ply": ply, "text": session.coach_cache.get(ply, "")}
 
 
 def coach_facts(session: Session, ply: int) -> dict:

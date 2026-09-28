@@ -84,7 +84,7 @@ def reason_text(board_before: chess.Board, board_after: chess.Board, mover: ches
                 pre_info: dict | None, post_pv: list[str], post_cp: int) -> tuple[str, str] | None:
     """Why a move was bad: (key, text). Facts only; None when nothing clean can be said."""
     try:
-        pre_pv = list(pre_info["pv"]) if pre_info else []
+        pre_pv = [u.uci() for u in pre_info["pv"]] if pre_info else []
         if post_cp <= -(MATE - 5_000):
             return "allowed_mate", "This allows a forced mate: " + _san_line(board_after, post_pv[:4])
         if pre_info:

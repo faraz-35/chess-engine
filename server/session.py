@@ -6,6 +6,7 @@ instead of being recomputed.
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
 import threading
@@ -258,7 +259,12 @@ class Session:
                 yield rec.ply
             self._summary = self._compute_summary()
             self.reviewed = True
-            self._save_pgn()
+            path = self._save_pgn()
+            path.with_suffix(".json").write_text(json.dumps({
+                "summary": self._summary,
+                "opening": next((r.opening for r in reversed(self.moves) if r.opening), None),
+                "result": self.result,
+            }))
             log.info("review %s done (%d moves)", self.id, len(self.moves))
 
     def _compute_summary(self) -> dict:
@@ -356,10 +362,12 @@ class Session:
         return {"eco": self.opening.eco, "name": self.opening.name,
                 "exact": self.opening.exact, "line": line}
 
-    def _save_pgn(self) -> None:
+    def _save_pgn(self):
         game = chess.pgn.Game()
         opponent = (f"Stockfish-{self.skill}" if self.opponent == "stockfish"
                     else f"Maia3-{self.elo}")
+        named = next((r.opening for r in reversed(self.moves) if r.opening), None)
+        eco, _, name = (named or "").partition(" ")
         game.headers.update({
             "Event": f"chess-engine local vs {opponent}",
             "Site": "localhost:8790",
@@ -368,6 +376,8 @@ class Session:
             "Black": opponent if self.player_color == chess.WHITE else "Faraz",
             "Result": self.result or "*",
         })
+        if eco and name:
+            game.headers["ECO"], game.headers["Opening"] = eco, name
         if self.resigned:
             game.headers["Termination"] = "Resignation"
         node: chess.pgn.GameNode = game
@@ -387,3 +397,4 @@ class Session:
         path = GAMES_DIR / f"{self.created:%Y%m%d-%H%M%S}-sf{self.skill}.pgn"
         path.write_text(str(game))
         log.info("pgn saved %s", path.name)
+        return path

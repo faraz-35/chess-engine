@@ -21,11 +21,67 @@ export interface ExploreResult {
   bestPvSan: string[];
 }
 
+export interface PracticeItem {
+  fen: string;
+  badge: string;
+  bestSan: string | null;
+  reason: string | null;
+  reasonKey: string | null;
+  gameFile: string;
+  date: string;
+  ply: number;
+  seen: number;
+  opening: string | null;
+}
+
+export interface PracticeCheck {
+  correct: boolean;
+  badge: string | null;
+  bestUci: string | null;
+  bestSan: string | null;
+  evalCp: number | null;
+}
+
+export interface StatsGame {
+  file: string;
+  date: string;
+  opponent: string;
+  opponentKind: string;
+  color: string;
+  result: string;
+  outcome: "win" | "loss" | "draw" | null;
+  accuracy: number | null;
+  counts: Record<string, number>;
+  opening: string | null;
+  plies: number;
+}
+
+export interface Stats {
+  games: StatsGame[];
+  totals: {
+    games: number;
+    wins: number;
+    losses: number;
+    draws: number;
+    accuracyAvg: number | null;
+    reviewed: number;
+    counts: Record<string, number>;
+  };
+  openings: { name: string; games: number; wins: number; losses: number; draws: number }[];
+  patterns: { key: string; count: number; games: number }[];
+}
+
 export const api = {
   newGame: (skill: number, color: string, opponent: string, elo: number) =>
     post<GameState>("/api/new", { skill, color, opponent, elo }),
 
   explore: (fen: string) => post<ExploreResult>("/api/explore", { fen }),
+
+  stats: async (): Promise<Stats> => (await fetch("/api/stats")).json(),
+
+  practice: async (): Promise<PracticeItem[]> => (await fetch("/api/practice")).json().then((r) => r.items),
+
+  practiceCheck: (fen: string, uci: string) => post<PracticeCheck>("/api/practice/check", { fen, uci }),
 
   move: (sid: string, uci: string) => post<GameState>("/api/move", { sid, uci }),
 

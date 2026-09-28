@@ -24,7 +24,8 @@ STOCKFISH_PATH = os.environ.get("STOCKFISH_PATH", "") or shutil.which("stockfish
     or "/opt/homebrew/bin/stockfish"
 MAIA3_UCI = os.environ.get("MAIA3_UCI", str(ROOT / ".venv" / "bin" / "maia3-uci"))
 MAIA3_MODEL = os.environ.get("MAIA3_MODEL", "maia3-79m")
-GAMES_DIR = ROOT / "games"
+GAMES_DIR = Path(os.environ.get("CHESS_GAMES_DIR", "")) if os.environ.get("CHESS_GAMES_DIR") \
+    else ROOT / "games"
 LOG_DIR = ROOT / "logs"
 WEB_DIST = ROOT / "web" / "dist"
 OPENINGS_DIR = ROOT / "data" / "openings"
