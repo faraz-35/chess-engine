@@ -241,7 +241,7 @@ export default function App() {
     setExplore(null);
     try {
       const s = await api.review(session.id, (done, total) =>
-        setProgress(`Analysing your moves ${done} / ${total}`),
+        setProgress(total ? `Analysing your moves ${done} / ${total}` : "Analysing…"),
       );
       setSession(s);
       const firstBad = s.moves.find(

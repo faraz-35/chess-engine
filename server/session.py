@@ -26,6 +26,7 @@ log = logging.getLogger("chess.session")
 
 PLAY_DEPTH = 12
 REVIEW_DEPTH = 14
+REVIEW_SEARCH_CAP_S = 20  # hard per-search cap: a review can never run away
 PLAY_MOVETIME = 0.35
 PV_KEEP = 6
 
@@ -374,7 +375,7 @@ class Session:
         """Deep analysis of one player move. Runs on a worker thread."""
         mover = board_before.turn
         worker = self._next_worker()
-        pre = engines.analyse_parallel(worker, board_before, REVIEW_DEPTH)
+        pre = engines.analyse_parallel(worker, board_before, REVIEW_DEPTH, cap_s=REVIEW_SEARCH_CAP_S)
         best = pre[0]["pv"][0] if pre else None
         pre_cp = quality.score_to_cp(pre[0]["score"], mover) if pre else 0
         board_after = board_before.copy()
@@ -384,7 +385,7 @@ class Session:
             post_cp = quality.terminal_cp(board_after, mover)
             post: list[dict] = []
         else:
-            post = engines.analyse_parallel(worker, board_after, REVIEW_DEPTH)
+            post = engines.analyse_parallel(worker, board_after, REVIEW_DEPTH, cap_s=REVIEW_SEARCH_CAP_S)
             post_cp = quality.score_to_cp(post[0]["score"], mover) if post else 0
         badge = quality.classify(pre_cp, post_cp, mv == best)
         fields = {

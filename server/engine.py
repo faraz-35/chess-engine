@@ -12,7 +12,7 @@ from .config import MAIA3_MODEL, MAIA3_UCI, STOCKFISH_PATH
 
 log = logging.getLogger("chess.engines")
 
-ANALYSIS_THREADS = 3
+ANALYSIS_THREADS = 2
 ANALYSIS_HASH_MB = 256
 ANALYSER_WORKERS = 3   # review analyses run across this many Stockfish processes
 PLAY_MOVETIME = 0.35
@@ -87,13 +87,19 @@ class Engines:
         """Best lines for the side to move, scores relative to it (worker 0)."""
         return self.analyse_parallel(0, board, depth, multipv)
 
-    def analyse_parallel(self, worker: int, board: chess.Board, depth: int, multipv: int = 1) -> list[dict]:
-        """Analyse on the given worker process (each serves one search at a time)."""
+    def analyse_parallel(self, worker: int, board: chess.Board, depth: int, multipv: int = 1,
+                         cap_s: float | None = None) -> list[dict]:
+        """Analyse on the given worker process (each serves one search at a time).
+
+        cap_s bounds the search in wall time, so a loaded machine can stall a
+        review but never hang it.
+        """
         engine = self._analysers[worker % len(self._analysers)]
         with self._analyser_locks[worker % len(self._analyser_locks)]:
             if board.is_game_over():
                 return []
-            return list(engine.analyse(board, chess.engine.Limit(depth=depth), multipv=multipv))
+            limit = chess.engine.Limit(depth=depth, time=cap_s) if cap_s else chess.engine.Limit(depth=depth)
+            return list(engine.analyse(board, limit, multipv=multipv))
 
     def quit(self) -> None:
         for engine in (self._play, *self._analysers, self._maia):

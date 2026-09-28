@@ -1,9 +1,12 @@
 """chess-engine — local Stockfish play + review. Run: uvicorn server.main:app --port 8790"""
 from __future__ import annotations
 
+import faulthandler
 import json
 import logging
 import secrets
+import signal
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -22,6 +25,7 @@ from .openings import Openings
 from .session import Session
 
 LOG_DIR.mkdir(exist_ok=True)
+faulthandler.register(signal.SIGUSR1, file=sys.stderr)  # kill -USR1 <pid> dumps all stacks
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
