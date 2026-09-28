@@ -7,9 +7,10 @@ interface Props {
   moves: MoveRec[];
   activePly: number;
   onJump: (ply: number) => void;
+  showGrades: boolean;
 }
 
-function Cell({ rec, active, onJump }: { rec: MoveRec; active: boolean; onJump: (ply: number) => void }) {
+function Cell({ rec, active, onJump, showGrades }: { rec: MoveRec; active: boolean; onJump: (ply: number) => void; showGrades: boolean }) {
   const badge = rec.badge ? BADGE[rec.badge] : null;
   return (
     <button
@@ -18,7 +19,7 @@ function Cell({ rec, active, onJump }: { rec: MoveRec; active: boolean; onJump: 
       onClick={() => onJump(rec.ply)}
     >
       <span>{rec.san}</span>
-      {badge && (
+      {badge && showGrades && (
         <span className="nag" style={{ color: badge.color }}>
           {badge.glyph}
         </span>
@@ -27,7 +28,7 @@ function Cell({ rec, active, onJump }: { rec: MoveRec; active: boolean; onJump: 
   );
 }
 
-export default function MoveList({ moves, activePly, onJump }: Props) {
+export default function MoveList({ moves, activePly, onJump, showGrades }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,9 +41,9 @@ export default function MoveList({ moves, activePly, onJump }: Props) {
     rows.push(
       <div className="row" key={i}>
         <span className="num">{i / 2 + 1}</span>
-        <Cell rec={moves[i]} active={activePly === i} onJump={onJump} />
+        <Cell rec={moves[i]} active={activePly === i} onJump={onJump} showGrades={showGrades} />
         {moves[i + 1] ? (
-          <Cell rec={moves[i + 1]} active={activePly === i + 1} onJump={onJump} />
+          <Cell rec={moves[i + 1]} active={activePly === i + 1} onJump={onJump} showGrades={showGrades} />
         ) : (
           <span />
         )}

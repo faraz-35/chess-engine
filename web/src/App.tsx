@@ -8,18 +8,20 @@ import KeyCard from "./KeyCard";
 import MoveList from "./MoveList";
 import Practice from "./Practice";
 import Progress from "./Progress";
+import SettingsPage from "./SettingsPage";
 import SummaryCard from "./SummaryCard";
 import { api, type ExploreResult } from "./api";
 import { arrow, destsFromFen } from "./boardUtils";
 import { fmtEval, moveLabel } from "./format";
+import { loadSettings, saveSettings, type AppSettings } from "./settings";
 import { sfx } from "./sound";
 import { BADGE, ARROW_COLORS, type Badge, type GameState, type MoveRec } from "./types";
 
-type Route = "play" | "practice" | "progress";
+type Route = "play" | "practice" | "progress" | "settings";
 
 function currentRoute(): Route {
   const hash = window.location.hash.replace("#/", "");
-  return hash === "practice" || hash === "progress" ? hash : "play";
+  return ["practice", "progress", "settings"].includes(hash) ? (hash as Route) : "play";
 }
 
 interface Drill {
@@ -120,8 +122,14 @@ export default function App() {
   const [sel, setSel] = useState<number | null>(null); // null = follow the live game
   const [progress, setProgress] = useState<string | null>(null);
   const [coach, setCoach] = useState<Record<number, string>>({});
-  const [coachOn, setCoachOn] = useState(true);
-  const [soundOn, setSoundOn] = useState(true);
+  const [settings, setSettings] = useState<AppSettings>(loadSettings);
+  const updateSetting = useCallback((patch: Partial<AppSettings>) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      saveSettings(next);
+      return next;
+    });
+  }, []);
   const [drill, setDrill] = useState<Drill | null>(null);
   const [line, setLine] = useState<LineState | null>(null);
   const [explore, setExplore] = useState<{ fen: string; result: ExploreResult } | null>(null);
@@ -132,7 +140,6 @@ export default function App() {
   const [route, setRoute] = useState<Route>(currentRoute);
   const [confirmResign, setConfirmResign] = useState(false);
   const [modalClosed, setModalClosed] = useState<string | null>(null);
-  const autoReviewed = useRef<string | null>(null);
   const stageTimer = useRef<number | null>(null);
   const toastId = useRef(0);
 
@@ -173,7 +180,6 @@ export default function App() {
     }
     try {
       const s = await api.newGame(skill, color, opponent, elo);
-      autoReviewed.current = null;
       setSession(s);
       setSel(null);
       setCoach({});
@@ -210,13 +216,12 @@ export default function App() {
     }
   }, [session, progress]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Review automatically once a game ends.
+  // Optional: review automatically when a game ends (Settings).
   useEffect(() => {
+    if (!settings.autoReview) return;
     if (!session || session.status !== "finished" || session.reviewed) return;
-    if (autoReviewed.current === session.id) return;
-    autoReviewed.current = session.id;
     void startReview();
-  }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [session, settings.autoReview]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const jump = useCallback(
     (ply: number) => {
@@ -301,8 +306,8 @@ export default function App() {
           const last = next.moves[next.moves.length - 1];
           if (!last?.byEngine) {
             // my move ended the game — show it directly
-            recSound(last, soundOn);
-            endSound(next, soundOn);
+            recSound(last, settings.soundOn);
+            endSound(next, settings.soundOn);
             setSession(next);
             setBusy(false);
             return;
@@ -318,13 +323,13 @@ export default function App() {
             turn: engineTurn,
             check: new Chess(mine.fenAfter).isCheck(),
           });
-          recSound(mine, soundOn);
+          recSound(mine, settings.soundOn);
           // Stage 2: after a beat, the reply arrives and the piece animates from its square.
           if (stageTimer.current != null) window.clearTimeout(stageTimer.current);
           stageTimer.current = window.setTimeout(() => {
             stageTimer.current = null;
-            recSound(last, soundOn);
-            endSound(next, soundOn);
+            recSound(last, settings.soundOn);
+            endSound(next, settings.soundOn);
             setSession(next);
             setBusy(false);
           }, 550);
@@ -365,7 +370,7 @@ export default function App() {
         notify("That move is not legal here.");
         return;
       }
-      recSound({ san: played.san } as MoveRec, soundOn);
+      recSound({ san: played.san } as MoveRec, settings.soundOn);
       setLine({
         baseFen,
         uci: [...branch, uci],
@@ -374,7 +379,7 @@ export default function App() {
         label: line ? "Exploring" : `Exploring after ${moveLabel(rec!)}`,
       });
     },
-    [session, busy, drill, soundOn, sel, line, rec],
+    [session, busy, drill, settings.soundOn, sel, line, rec],
   );
 
   const resign = useCallback(async () => {
@@ -453,16 +458,19 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [session, moves.length, reviewing, line, drill, selPly, jump, stepMistake]);
 
-  const coachPly = keyRec && !keyRec.byEngine ? keyRec.ply : null;
+  // Coach sentences are in-play feedback or post-review analysis — never
+  // pushed while simply browsing an unreviewed game.
+  const coachAllowed = live ? settings.coach : !!session?.reviewed && settings.coachReview;
+  const coachPly = keyRec && !keyRec.byEngine && coachAllowed ? keyRec.ply : null;
   useEffect(() => {
-    if (!coachOn || !session || coachPly == null) return;
+    if (!coachAllowed || !session || coachPly == null) return;
     if (coach[coachPly] !== undefined) return;
     let alive = true;
     api.coach(session.id, coachPly).then((text) => {
       if (alive) setCoach((c) => ({ ...c, [coachPly]: text }));
     });
     return () => { alive = false; };
-  }, [coachOn, session, coachPly]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [coachAllowed, session, coachPly]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const displayFen = useMemo(() => {
     if (!session) return null;
@@ -522,6 +530,8 @@ export default function App() {
       return [];
     }
     if (rec) {
+      if (!live && !session?.reviewed) return []; // browsing an unreviewed game: no engine arrows
+      if (!settings.lineArrows && rec.ply === lastPly) return [];
       // Position after the played move: first expected reply is colored red when
       // it hurts (captures a piece or gives check/mate), the rest is the line.
       const list: Arrow[] = [];
@@ -532,8 +542,8 @@ export default function App() {
       }
       return list;
     }
-    return (session?.bookArrows ?? []).map((u) => arrow(u, "book"));
-  }, [drill, line, explore, displayFen, rec, session]);
+    return settings.openingHints ? (session?.bookArrows ?? []).map((u) => arrow(u, "book")) : [];
+  }, [drill, line, explore, displayFen, rec, session, settings]);
 
   const board = useMemo(() => {
     if (!session) return null;
@@ -559,7 +569,7 @@ export default function App() {
 
   const tabsNav = (
     <nav className="tabs">
-      {([["play", "Play"], ["practice", "Practice"], ["progress", "Progress"]] as [Route, string][]).map(
+      {([["play", "Play"], ["practice", "Practice"], ["progress", "Progress"], ["settings", "Settings"]] as [Route, string][]).map(
         ([key, label]) => (
           <button key={key} className={route === key ? "tab on" : "tab"} onClick={() => goto(key)}>
             {label}
@@ -584,6 +594,7 @@ export default function App() {
         </header>
         {route === "practice" && <Practice orientation={session?.playerColor ?? color} />}
         {route === "progress" && <Progress onPractice={() => goto("practice")} />}
+        {route === "settings" && <SettingsPage settings={settings} onChange={updateSetting} />}
         <div className="toasts">
           {toasts.map((t) => (
             <div key={t.id} className={"toast " + t.tone}>{t.text}</div>
@@ -720,7 +731,7 @@ export default function App() {
           <>
             <span className="chip subtle">{opponentLabel(session)}</span>
             {v && <span className={`pill ${v.tone}`}>{v.text}</span>}
-            {session.opening && (
+            {session.opening && settings.openingHints && (
               <span className="opening">
                 {session.opening.eco} {session.opening.name}
               </span>
@@ -730,17 +741,6 @@ export default function App() {
         <span className="spacer" />
         {route === "play" && (
           <>
-            <label className="toggle">
-              <input type="checkbox" checked={coachOn} onChange={(e) => setCoachOn(e.target.checked)} />
-              Coach
-            </label>
-            <button
-              className={soundOn ? "icon-btn on" : "icon-btn"}
-              onClick={() => setSoundOn(!soundOn)}
-              title="Toggle sound"
-            >
-              {soundOn ? "Sound on" : "Sound off"}
-            </button>
             {!finished && (
               <button
                 className={confirmResign ? "danger" : ""}
@@ -772,7 +772,7 @@ export default function App() {
       <main>
         <section className="board-area">
           <div className="board-row">
-            <EvalBar cp={whiteCp} orientation={session.playerColor} />
+            {settings.evalBar && <EvalBar cp={whiteCp} orientation={session.playerColor} />}
             <Board
               fen={board.fen}
               dests={board.dests}
@@ -825,6 +825,9 @@ export default function App() {
             <div className="under-board">
               <span className={"turn-dot" + (finished || browsingLive ? " done" : session.turn === session.playerColor ? " you" : "")} />
               <span className="status-text">{statusText}</span>
+              {finished && !session.reviewed && !reviewing && (
+                <button className="accent" onClick={startReview}>Review with Stockfish</button>
+              )}
               {browsingLive && (
                 <button className="return-btn" onClick={() => { setSel(null); setStep(null); }}>
                   Return to game
@@ -838,7 +841,7 @@ export default function App() {
 
         <aside className="panel">
           <span className="section-label">Evaluation</span>
-          <EvalGraph evals={graphEvals} index={selPly} markers={badPlies} onJump={jump} />
+          <EvalGraph evals={graphEvals} index={selPly} markers={session.reviewed ? badPlies : []} onJump={jump} />
           <Legend />
           {session.summary && <SummaryCard summary={session.summary} onJump={jump} />}
           {keyRec && (
@@ -847,15 +850,16 @@ export default function App() {
               <KeyCard
                 rec={keyRec}
                 playerColor={session.playerColor}
-                coachText={coachOn ? (coach[keyRec.ply] ?? null) : null}
+                coachText={coachAllowed ? (coach[keyRec.ply] ?? null) : null}
                 inLine={line != null}
+                minimal={(!session.reviewed && !live) || !settings.liveGrades}
                 onStartLine={openLine}
                 onDrill={startDrill}
               />
             </>
           )}
           <span className="section-label">Moves</span>
-          <MoveList moves={moves} activePly={selPly} onJump={jump} />
+          <MoveList moves={moves} activePly={selPly} onJump={jump} showGrades={settings.liveGrades && (session.reviewed || !finished)} />
         </aside>
       </main>
       )}
