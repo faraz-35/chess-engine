@@ -271,6 +271,15 @@ export default function App() {
     void startReview();
   }, [session, settings.autoReview]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // One-ply step onto move i: board shows the position before it, then the
+  // piece travels from its origin square.
+  const stepFor = (m: MoveRec): StepMove => ({
+    fen: m.fenAfter,
+    preFen: m.ply > 0 ? moves[m.ply - 1].fenAfter : "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    from: m.uci.slice(0, 2),
+    to: m.uci.slice(2, 4),
+  });
+
   const jump = useCallback(
     (ply: number) => {
       if (!session || !moves.length) return;
@@ -279,13 +288,7 @@ export default function App() {
       // Stepping exactly one ply forward animates the move on the board;
       // landing on the live position returns to the real game.
       if (target === selPly + 1 && moves[target]) {
-        const next = moves[target];
-        setStep({
-          fen: next.fenAfter,
-          preFen: target > 0 ? moves[target - 1].fenAfter : "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-          from: next.uci.slice(0, 2),
-          to: next.uci.slice(2, 4),
-        });
+        setStep(stepFor(moves[target]));
       } else {
         setStep(null);
       }
@@ -490,6 +493,7 @@ export default function App() {
         setDrill(null);
         setExplore(null);
         setStep(null);
+        setManualBetter(null);
         setSel(null);
         return;
       }
@@ -500,6 +504,20 @@ export default function App() {
         return;
       }
       if (drill) return;
+      // Better view: the board poses the position before your move. Right
+      // plays your actual move out, left steps back a ply, shift jumps on.
+      if (showBetter && rec) {
+        if (e.key === "ArrowRight" && !e.shiftKey) {
+          e.preventDefault();
+          setStep(stepFor(rec));
+          setManualBetter(false);
+        } else if (e.key === "ArrowLeft" && !e.shiftKey) {
+          e.preventDefault();
+          jump(selPly - 1);
+        } else if (e.key === "ArrowRight") { e.preventDefault(); stepMistake(1); }
+        else if (e.key === "ArrowLeft") { e.preventDefault(); stepMistake(-1); }
+        return;
+      }
       if (e.key === "ArrowRight" && !e.shiftKey) { e.preventDefault(); jump(selPly + 1); }
       else if (e.key === "ArrowLeft" && !e.shiftKey) { e.preventDefault(); jump(selPly - 1); }
       else if (e.key === "ArrowRight") { e.preventDefault(); stepMistake(1); }
@@ -507,7 +525,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [session, moves.length, reviewing, line, drill, selPly, jump, stepMistake]);
+  }, [session, moves.length, reviewing, line, drill, selPly, showBetter, jump, stepMistake]);
 
   // Coach sentences are in-play feedback or post-review analysis — never
   // pushed while simply browsing an unreviewed game.
@@ -583,6 +601,10 @@ export default function App() {
     if (rec) {
       if (!live && !session?.reviewed) return []; // browsing an unreviewed game: no engine arrows
       if (!settings.lineArrows && rec.ply === lastPly) return [];
+      if (showBetter) {
+        // Better-plan board (your position before the move): the better move is the story.
+        return rec.bestUci ? [arrow(rec.bestUci, "best")] : [];
+      }
       // Position after the played move: first expected reply is colored red when
       // it hurts (captures a piece or gives check/mate), the rest is the line.
       const list: Arrow[] = [];
@@ -923,7 +945,11 @@ export default function App() {
                 inLine={line != null}
                 minimal={(!session.reviewed && !live) || !settings.liveGrades}
                 showingBetter={showBetter && rec?.ply === keyRec.ply}
-                onToggleBetter={() => setManualBetter(!showBetter)}
+                onToggleBetter={() => {
+                  // Revealing the actual move plays it out instead of snapping.
+                  if (showBetter && rec) setStep(stepFor(rec));
+                  setManualBetter(!showBetter);
+                }}
                 onStartLine={openLine}
                 onDrill={startDrill}
               />

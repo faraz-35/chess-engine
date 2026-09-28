@@ -296,10 +296,12 @@ class Session:
                 pre_cp=side.get("preCp") if not by_engine else None,
                 best_uci=side.get("bestUci") or best_uci,
                 best_san=side.get("bestSan") or best_san,
+                pv=side.get("pv") or [],
+                pv_san=side.get("pvSan") or [],
+                best_pv=side.get("bestPv") or [],
+                best_pv_san=side.get("bestPvSan") or [],
                 reason=side.get("reason"), reason_key=side.get("reasonKey"),
             )
-            if side.get("pvSan"):
-                rec.pv_san = side["pvSan"]
             session.moves.append(rec)
         session.board = board
         session.reviewed = bool(sidecar.get("summary"))
@@ -370,6 +372,8 @@ class Session:
                     "ply": r.ply, "byEngine": r.by_engine, "evalCp": r.eval_cp,
                     "preCp": r.pre_cp, "badge": r.badge,
                     "bestUci": r.best_uci, "bestSan": r.best_san,
+                    "pv": r.pv, "pvSan": r.pv_san,
+                    "bestPv": r.best_pv, "bestPvSan": r.best_pv_san,
                     "reason": r.reason, "reasonKey": r.reason_key,
                 } for r in self.moves],
             }))
