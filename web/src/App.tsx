@@ -243,6 +243,7 @@ export default function App() {
       const s = await api.review(session.id, (done, total) =>
         setProgress(total ? `Analysing your moves ${done} / ${total}` : "Analysing…"),
       );
+      if (!s || !s.moves) throw new Error("Review returned no data.");
       setSession(s);
       const firstBad = s.moves.find(
         (m) => !m.byEngine && (m.badge === "mistake" || m.badge === "blunder"),
@@ -823,11 +824,6 @@ export default function App() {
                 }}
               >
                 {confirmResign ? "Sure? Click again" : "Resign"}
-              </button>
-            )}
-            {!session.reviewed && moves.length > 0 && (
-              <button disabled={reviewing} onClick={startReview}>
-                Review
               </button>
             )}
             <button className="primary" onClick={startGame}>New game</button>

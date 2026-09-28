@@ -127,13 +127,13 @@ export const api = {
         if (msg.error) {
           stream.close();
           reject(new Error(msg.error));
-        } else if (msg.done) {
+        } else if (msg.done === true) {
           stream.close();
           resolve(msg.state);
-        } else if (msg.total !== undefined && msg.ply === undefined) {
-          onProgress(0, msg.total);
         } else if (msg.ply !== undefined) {
           onProgress(msg.ply + 1, msg.total);
+        } else if (msg.total !== undefined) {
+          onProgress(0, msg.total);
         }
       };
       stream.onerror = () => {
