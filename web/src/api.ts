@@ -13,9 +13,19 @@ async function post<T>(url: string, body?: unknown): Promise<T> {
   return response.json();
 }
 
+export interface ExploreResult {
+  evalCp: number | null;
+  bestUci: string | null;
+  bestSan: string | null;
+  bestPv: string[];
+  bestPvSan: string[];
+}
+
 export const api = {
   newGame: (skill: number, color: string, opponent: string, elo: number) =>
     post<GameState>("/api/new", { skill, color, opponent, elo }),
+
+  explore: (fen: string) => post<ExploreResult>("/api/explore", { fen }),
 
   move: (sid: string, uci: string) => post<GameState>("/api/move", { sid, uci }),
 

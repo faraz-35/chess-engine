@@ -220,6 +220,7 @@ piece.bk, piece.king.black { background-image: url("/pieces/cburnett/bK.svg"); }
 .line-sans { display: flex; gap: 8px; font-family: ui-monospace, "SF Mono", monospace; font-size: 13px; flex-wrap: wrap; }
 .line-sans b { color: var(--faint); font-weight: 500; }
 .line-sans b.on { color: var(--text); background: var(--accent-soft); border-radius: 5px; padding: 0 5px; }
+.line-sans b.suggestion { color: var(--accent); font-weight: 600; }
 .line-pos { color: var(--faint); font-size: 12px; }
 .linebar button { padding: 3px 10px; }
 

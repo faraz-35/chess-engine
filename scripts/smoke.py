@@ -19,17 +19,25 @@ def main() -> int:
     health = client.get("/api/health").json()
     check("health", health.get("ok") is True and health.get("openings", 0) > 1000, str(health))
 
+    def post_move(sid: str, uci: str) -> dict:
+        response = client.post("/api/move", json={"sid": sid, "uci": uci})
+        body = response.json()
+        if response.status_code != 200:
+            print(f"FAIL move {uci} -> HTTP {response.status_code}: {body}")
+        return body
+
     state = client.post("/api/new", json={"skill": 3, "color": "white"}).json()
     check("new game", state["status"] == "playing" and "e2" in state["dests"], state["id"])
 
-    state = client.post("/api/move", json={"sid": state["id"], "uci": "f2f3"}).json()
-    check("move f3 + engine reply", len(state["moves"]) == 2,
-          f"engine played {state['moves'][1]['san'] if len(state['moves']) > 1 else '?'}")
+    state = post_move(state["id"], "f2f3")
+    check("move f3 + engine reply", len(state.get("moves", [])) == 2,
+          f"engine played {state['moves'][1]['san'] if len(state.get('moves', [])) > 1 else '?'}")
 
-    state = client.post("/api/move", json={"sid": state["id"], "uci": "g2g4"}).json()
-    if state["status"] != "finished":
-        state = client.post("/api/move", json={"sid": state["id"], "uci": "b8c3"}).json()
-    check("game flow ok", len(state["moves"]) >= 4, f"{len(state['moves'])} plies, status {state['status']}")
+    state = post_move(state["id"], "g2g4")
+    if state.get("status") != "finished":
+        state = post_move(state["id"], "b8c3")
+    check("game flow ok", len(state.get("moves", [])) >= 4,
+          f"{len(state.get('moves', []))} plies, status {state.get('status')}")
     check("opening detected", "opening" in json.dumps(state)[:200] or state.get("opening") is not None
           or len(state["moves"]) >= 4)
 

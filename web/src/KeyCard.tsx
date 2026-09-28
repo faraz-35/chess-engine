@@ -6,18 +6,15 @@ interface Props {
   rec: MoveRec;
   playerColor: "white" | "black";
   coachText: string | null;
-  showBetter: boolean;
   inLine: boolean;
-  onToggleBetter: () => void;
   onStartLine: (kind: "actual" | "better") => void;
   onDrill: () => void;
 }
 
-export default function KeyCard({
-  rec, playerColor, coachText, showBetter, inLine, onToggleBetter, onStartLine, onDrill,
-}: Props) {
+export default function KeyCard({ rec, playerColor, coachText, inLine, onStartLine, onDrill }: Props) {
   const badge = rec.badge ? BADGE[rec.badge] : null;
   const bad = !rec.byEngine && (rec.badge === "mistake" || rec.badge === "blunder");
+  const hasBetter = !rec.byEngine && !!rec.bestSan && rec.bestUci !== rec.uci && rec.bestPv.length > 0;
 
   return (
     <div className="keycard">
@@ -35,27 +32,22 @@ export default function KeyCard({
       </div>
       {rec.reason && <p className="kc-reason">{rec.reason}</p>}
       {coachText && <p className="kc-coach">{coachText}</p>}
-      {!rec.byEngine && rec.bestSan && rec.bestUci !== rec.uci && !bad && (
+      {hasBetter && !bad && (
         <p className="kc-best">Better was <b>{rec.bestSan}</b>.</p>
       )}
-      {(bad || (showBetter && rec.bestPv.length > 0)) && (
+      {(hasBetter || (bad && rec.pvSan.length > 0)) && !inLine && (
         <div className="kc-actions">
-          {rec.bestSan && rec.bestPv.length > 0 && (
-            <button onClick={onToggleBetter}>
-              {showBetter ? "Back to the game" : "See the better move"}
+          {hasBetter && (
+            <button onClick={() => onStartLine("better")}>
+              {bad ? "See the better line" : "See the better move"}
             </button>
           )}
-          {bad && !inLine && <button className="accent" onClick={onDrill}>Try it yourself</button>}
+          {bad && <button className="accent" onClick={onDrill}>Try it yourself</button>}
         </div>
       )}
-      {!rec.byEngine && rec.pvSan.length > 1 && !showBetter && (
+      {!inLine && !rec.byEngine && rec.pvSan.length > 1 && (
         <button className="kc-line-btn" onClick={() => onStartLine("actual")}>
-          Step through the engine line
-        </button>
-      )}
-      {showBetter && rec.bestPvSan.length > 1 && (
-        <button className="kc-line-btn" onClick={() => onStartLine("better")}>
-          Step through the best line
+          Step through the expected line
         </button>
       )}
     </div>

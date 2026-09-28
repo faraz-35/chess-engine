@@ -29,6 +29,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("chess")
 
+EXPLORE_DEPTH = 14
+EXPLORE_PV = 6
+
 app = FastAPI(title="chess-engine", docs_url=None, redoc_url=None)
 
 _engines: Engines | None = None
@@ -80,6 +83,10 @@ class DrillTryIn(BaseModel):
     sid: str
     ply: int
     uci: str
+
+
+class ExploreIn(BaseModel):
+    fen: str
 
 
 @app.on_event("startup")
@@ -139,6 +146,34 @@ def resign(sid: str):
     session = session_or_404(sid)
     session.resign()
     return session.payload()
+
+
+@app.post("/api/explore")
+def explore(body: ExploreIn):
+    """Engine's best line from any position the user reaches while exploring."""
+    try:
+        board = chess.Board(body.fen)
+    except ValueError:
+        raise HTTPException(400, "bad fen")
+    info = engines().analyse(board, EXPLORE_DEPTH)
+    if not info:
+        return {"evalCp": None, "bestUci": None, "bestSan": None, "bestPv": [], "bestPvSan": []}
+    pv = [u.uci() for u in info[0]["pv"][:EXPLORE_PV]]
+    sans: list[str] = []
+    preview = board.copy()
+    for u in pv:
+        mv = chess.Move.from_uci(u)
+        if mv not in preview.legal_moves:
+            break
+        sans.append(preview.san(mv))
+        preview.push(mv)
+    return {
+        "evalCp": quality.score_to_cp(info[0]["score"], chess.WHITE),
+        "bestUci": pv[0] if pv else None,
+        "bestSan": sans[0] if sans else None,
+        "bestPv": pv,
+        "bestPvSan": sans,
+    }
 
 
 @app.get("/api/review/{sid}")

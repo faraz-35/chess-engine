@@ -6,7 +6,7 @@ import EvalGraph from "./EvalGraph";
 import KeyCard from "./KeyCard";
 import MoveList from "./MoveList";
 import SummaryCard from "./SummaryCard";
-import { api } from "./api";
+import { api, type ExploreResult } from "./api";
 import { fmtEval, moveLabel } from "./format";
 import { sfx } from "./sound";
 import { BADGE, ARROW_COLORS, type Badge, type GameState, type MoveRec } from "./types";
@@ -76,6 +76,18 @@ function arrow(uci: string, brush: string): Arrow {
   return { orig: uci.slice(0, 2), dest: uci.slice(2, 4), brush };
 }
 
+function destsFromFen(fen: string): Record<string, string[]> {
+  const dests: Record<string, string[]> = {};
+  try {
+    for (const mv of new Chess(fen).moves({ verbose: true })) {
+      (dests[mv.from] ??= []).push(mv.to);
+    }
+  } catch {
+    /* unparsable position: nothing movable */
+  }
+  return dests;
+}
+
 function verdict(s: GameState): { text: string; tone: "win" | "lose" | "draw" } {
   if (s.resigned) return { text: "You resigned.", tone: "lose" };
   if (!s.result) return { text: "Game over.", tone: "draw" };
@@ -111,7 +123,8 @@ export default function App() {
   const [soundOn, setSoundOn] = useState(true);
   const [drill, setDrill] = useState<Drill | null>(null);
   const [line, setLine] = useState<LineState | null>(null);
-  const [showBetter, setShowBetter] = useState(false);
+  const [explore, setExplore] = useState<{ fen: string; result: ExploreResult } | null>(null);
+  const exploreCache = useRef<Map<string, ExploreResult>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const autoReviewed = useRef<string | null>(null);
@@ -143,7 +156,7 @@ export default function App() {
       setCoach({});
       setDrill(null);
       setLine(null);
-      setShowBetter(false);
+      setExplore(null);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -156,7 +169,7 @@ export default function App() {
     setProgress("Preparing…");
     setDrill(null);
     setLine(null);
-    setShowBetter(false);
+    setExplore(null);
     try {
       const s = await api.review(session.id, (done, total) =>
         setProgress(`Analysing your moves ${done} / ${total}`),
@@ -187,7 +200,7 @@ export default function App() {
       setSel(Math.max(0, Math.min(session.moves.length - 1, ply)));
       setDrill(null);
       setLine(null);
-      setShowBetter(false);
+      setExplore(null);
     },
     [session, moves.length],
   );
@@ -210,7 +223,7 @@ export default function App() {
 
   const play = useCallback(
     async (uci: string) => {
-      if (!session || busy || finished) return;
+      if (!session || busy) return;
       if (drill) {
         try {
           const result = await api.drillTry(session.id, drill.ply, uci);
@@ -236,48 +249,90 @@ export default function App() {
         }
         return;
       }
-      setBusy(true);
-      setSel(null);
-      setShowBetter(false);
-      setLine(null);
-      try {
-        const next = await api.move(session.id, uci);
-        const last = next.moves[next.moves.length - 1];
-        if (!last?.byEngine) {
-          // my move ended the game — show it directly
-          recSound(last, soundOn);
-          endSound(next, soundOn);
-          setSession(next);
+      if (session.status === "playing") {
+        setBusy(true);
+        setSel(null);
+        setLine(null);
+        setExplore(null);
+        try {
+          const next = await api.move(session.id, uci);
+          const last = next.moves[next.moves.length - 1];
+          if (!last?.byEngine) {
+            // my move ended the game — show it directly
+            recSound(last, soundOn);
+            endSound(next, soundOn);
+            setSession(next);
+            setBusy(false);
+            return;
+          }
+          // Stage 1: my move lands (the piece is already where I played it).
+          const mine = next.moves[next.moves.length - 2];
+          const engineTurn: "white" | "black" = session.playerColor === "white" ? "black" : "white";
+          setSession({
+            ...next,
+            fen: mine.fenAfter,
+            lastMove: [mine.uci.slice(0, 2), mine.uci.slice(2, 4)],
+            dests: {},
+            turn: engineTurn,
+            check: new Chess(mine.fenAfter).isCheck(),
+          });
+          recSound(mine, soundOn);
+          // Stage 2: after a beat, the reply arrives and the piece animates from its square.
+          if (stageTimer.current != null) window.clearTimeout(stageTimer.current);
+          stageTimer.current = window.setTimeout(() => {
+            stageTimer.current = null;
+            recSound(last, soundOn);
+            endSound(next, soundOn);
+            setSession(next);
+            setBusy(false);
+          }, 550);
+        } catch (e) {
+          setError(String(e));
           setBusy(false);
-          return;
         }
-        // Stage 1: my move lands (the piece is already where I played it).
-        const mine = next.moves[next.moves.length - 2];
-        const engineTurn: "white" | "black" = session.playerColor === "white" ? "black" : "white";
-        setSession({
-          ...next,
-          fen: mine.fenAfter,
-          lastMove: [mine.uci.slice(0, 2), mine.uci.slice(2, 4)],
-          dests: {},
-          turn: engineTurn,
-          check: new Chess(mine.fenAfter).isCheck(),
-        });
-        recSound(mine, soundOn);
-        // Stage 2: after a beat, the reply arrives and the piece animates from its square.
-        if (stageTimer.current != null) window.clearTimeout(stageTimer.current);
-        stageTimer.current = window.setTimeout(() => {
-          stageTimer.current = null;
-          recSound(last, soundOn);
-          endSound(next, soundOn);
-          setSession(next);
-          setBusy(false);
-        }, 550);
-      } catch (e) {
-        setError(String(e));
-        setBusy(false);
+        return;
       }
+      // Exploration: a scratch branch from the position on the board. The game record
+      // never changes; pieces can be moved for either side and the engine re-evaluates.
+      let baseFen: string;
+      let branch: string[];
+      let branchSan: string[];
+      if (line) {
+        baseFen = line.baseFen;
+        branch = line.uci.slice(0, line.index + 1);
+        branchSan = line.san.slice(0, line.index + 1);
+      } else if (rec) {
+        baseFen = rec.fenAfter;
+        branch = [];
+        branchSan = [];
+      } else {
+        return;
+      }
+      const game = new Chess(baseFen);
+      for (const u of branch) {
+        game.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u.length > 4 ? u[4] : undefined });
+      }
+      let played;
+      try {
+        played = game.move({
+          from: uci.slice(0, 2),
+          to: uci.slice(2, 4),
+          promotion: uci.length > 4 ? uci[4] : undefined,
+        });
+      } catch {
+        setError("That move is not legal here.");
+        return;
+      }
+      recSound({ san: played.san } as MoveRec, soundOn);
+      setLine({
+        baseFen,
+        uci: [...branch, uci],
+        san: [...branchSan, played.san],
+        index: branch.length,
+        label: line ? "Exploring" : `Exploring after ${moveLabel(rec!)}`,
+      });
     },
-    [session, busy, finished, drill, soundOn],
+    [session, busy, drill, soundOn, sel, line, rec],
   );
 
   const resign = useCallback(async () => {
@@ -295,7 +350,7 @@ export default function App() {
     try {
       const d = await api.drill(session.id, selPly);
       setLine(null);
-      setShowBetter(false);
+      setExplore(null);
       setDrill({ ply: selPly, fen: d.fen, dests: d.dests, tries: 0, bestUci: null, message: null });
     } catch (e) {
       setError(String(e));
@@ -314,7 +369,6 @@ export default function App() {
           index: 0,
           label: `Best line — ${rec.bestSan ?? ""}`,
         });
-        setShowBetter(true);
       } else {
         setLine({ baseFen: rec.fenAfter, uci: rec.pv, san: rec.pvSan, index: 0, label: "Engine line" });
       }
@@ -328,7 +382,7 @@ export default function App() {
       if (e.key === "Escape") {
         setLine(null);
         setDrill(null);
-        setShowBetter(false);
+        setExplore(null);
         return;
       }
       if (!session || !moves.length || reviewing) return;
@@ -358,13 +412,62 @@ export default function App() {
     return () => { alive = false; };
   }, [coachOn, session, coachPly]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const displayFen = useMemo(() => {
+    if (!session) return null;
+    if (drill) return drill.fen;
+    if (line) return linePosition(line.baseFen, line.uci, line.index).fen;
+    if (rec) return rec.fenAfter;
+    return session.fen;
+  }, [session, drill, line, rec]);
+
+  // Analyse whatever exploration position is on the board (debounced, cached by FEN).
+  useEffect(() => {
+    if (!line || !displayFen) return;
+    const game = new Chess(displayFen);
+    if (game.isGameOver()) {
+      setExplore(null);
+      return;
+    }
+    const cached = exploreCache.current.get(displayFen);
+    if (cached) {
+      setExplore({ fen: displayFen, result: cached });
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await api.explore(displayFen);
+        exploreCache.current.set(displayFen, result);
+        if (!cancelled) setExplore({ fen: displayFen, result });
+      } catch {
+        /* exploration is best-effort; the last shown analysis stays */
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [line, displayFen]);
+
+  const lineEnd = useMemo(() => {
+    if (!line || !displayFen) return null;
+    const game = new Chess(displayFen);
+    if (game.isCheckmate()) return "Checkmate";
+    if (game.isStalemate()) return "Stalemate";
+    if (game.isInsufficientMaterial() || game.isDraw()) return "Draw";
+    return null;
+  }, [line, displayFen]);
+
   const arrows: Arrow[] = useMemo(() => {
     if (drill) return drill.bestUci ? [arrow(drill.bestUci, "best")] : [];
-    if (line) return [];
-    if (showBetter && rec) {
-      const list: Arrow[] = rec.bestUci ? [arrow(rec.bestUci, "best")] : [];
-      rec.bestPv.slice(1, 4).forEach((u) => list.push(arrow(u, "line")));
-      return list;
+    if (line) {
+      const fresh = explore && explore.fen === displayFen ? explore.result : null;
+      if (fresh?.bestUci) {
+        const list: Arrow[] = [arrow(fresh.bestUci, "best")];
+        fresh.bestPv.slice(1, 4).forEach((u) => list.push(arrow(u, "line")));
+        return list;
+      }
+      return [];
     }
     if (rec) {
       // Position after the played move: first expected reply is colored red when
@@ -378,27 +481,27 @@ export default function App() {
       return list;
     }
     return (session?.bookArrows ?? []).map((u) => arrow(u, "book"));
-  }, [drill, line, showBetter, rec, session]);
+  }, [drill, line, explore, displayFen, rec, session]);
 
   const board = useMemo(() => {
     if (!session) return null;
     if (drill) return { fen: drill.fen, last: null, dests: drill.dests, check: false };
     if (line) {
       const pos = linePosition(line.baseFen, line.uci, line.index);
-      return { fen: pos.fen, last: pos.last, dests: {}, check: false };
+      return { fen: pos.fen, last: pos.last, dests: destsFromFen(pos.fen), check: new Chess(pos.fen).isCheck() };
     }
-    if (showBetter && rec) return { fen: rec.fenBefore, last: null, dests: {}, check: false };
     const atLive = rec != null && rec.ply === lastPly && session.status === "playing";
     if (rec) {
+      const over = session.status === "finished";
       return {
         fen: rec.fenAfter,
         last: [rec.uci.slice(0, 2), rec.uci.slice(2, 4)] as [string, string],
-        dests: atLive ? session.dests : {},
-        check: atLive ? session.check : false,
+        dests: over ? destsFromFen(rec.fenAfter) : atLive ? session.dests : {},
+        check: atLive ? session.check : new Chess(rec.fenAfter).isCheck(),
       };
     }
     return { fen: session.fen, last: session.lastMove, dests: session.dests, check: session.check };
-  }, [session, drill, line, showBetter, rec, lastPly]);
+  }, [session, drill, line, rec, lastPly]);
 
   if (!session || !board) {
     return (
@@ -487,8 +590,12 @@ export default function App() {
   }
 
   const v = finished ? verdict(session) : null;
-  const barCp = rec?.evalCp ?? 0;
-  const whiteCp = session.playerColor === "white" ? barCp : -barCp;
+  const exploringHere = explore != null && explore.fen === displayFen && explore.result.evalCp != null;
+  const whiteCp = exploringHere
+    ? (explore!.result.evalCp as number)               // explore evals are already white POV
+    : session.playerColor === "white"
+      ? (rec?.evalCp ?? 0)
+      : -(rec?.evalCp ?? 0);
   const graphEvals = moves.map((m) =>
     m.evalCp == null ? null : session.playerColor === "black" ? -m.evalCp : m.evalCp,
   );
@@ -557,6 +664,11 @@ export default function App() {
                 {line.san.map((s, i) => (
                   <b key={i} className={i === line.index ? "on" : ""}>{s}</b>
                 ))}
+                {lineEnd ? (
+                  <b className="suggestion">{lineEnd}</b>
+                ) : explore?.fen === displayFen && explore.result.bestSan ? (
+                  <b className="suggestion">{explore.result.bestSan}</b>
+                ) : null}
               </span>
               <span className="line-pos">
                 {line.index + 1}/{line.uci.length}
@@ -604,9 +716,7 @@ export default function App() {
                 rec={keyRec}
                 playerColor={session.playerColor}
                 coachText={coachOn ? (coach[keyRec.ply] ?? null) : null}
-                showBetter={showBetter && rec?.ply === keyRec.ply}
                 inLine={line != null}
-                onToggleBetter={() => setShowBetter((b) => !b)}
                 onStartLine={openLine}
                 onDrill={startDrill}
               />
