@@ -132,7 +132,7 @@ export default function App() {
   }, []);
   const [drill, setDrill] = useState<Drill | null>(null);
   const [line, setLine] = useState<LineState | null>(null);
-  const [manualBetter, setManualBetter] = useState<boolean | null>(null); // null = automatic
+  const [showBetter, setShowBetter] = useState(false); // pose the position before your move
   const [explore, setExplore] = useState<{ fen: string; result: ExploreResult } | null>(null);
   const [step, setStep] = useState<StepMove | null>(null);
   const exploreCache = useRef<Map<string, ExploreResult>>(new Map());
@@ -177,14 +177,6 @@ export default function App() {
     : rec;
   const reviewing = progress != null;
   const finished = session?.status === "finished";
-  // On a reviewed mistake the better plan is the story — show it by default.
-  const autoBetter = Boolean(
-    !live && session?.reviewed && rec && !rec.byEngine
-    && (rec.badge === "mistake" || rec.badge === "blunder" || rec.badge === "inaccuracy")
-    && rec.bestUci && rec.bestUci !== rec.uci && rec.bestPv.length > 0
-    && !drill && !line,
-  );
-  const showBetter = manualBetter ?? autoBetter;
 
   const startGame = useCallback(async () => {
     setToasts([]);
@@ -201,7 +193,7 @@ export default function App() {
       setDrill(null);
       setLine(null);
       setExplore(null);
-      setManualBetter(null);
+      setShowBetter(false);
     } catch (e) {
       notify(String(e));
     } finally {
@@ -224,7 +216,7 @@ export default function App() {
       setDrill(null);
       setLine(null);
       setExplore(null);
-      setManualBetter(null);
+      setShowBetter(false);
       setStep(null);
       goto("play");
     } catch (e) {
@@ -253,7 +245,7 @@ export default function App() {
         (m) => !m.byEngine && (m.badge === "mistake" || m.badge === "blunder"),
       );
       setStep(null);
-      setManualBetter(null);
+      setShowBetter(false);
       // If the user browsed during the review, respect where they stopped.
       setSel(navigated ? (selAtStart != null ? Math.min(selAtStart, s.moves.length - 1) : null)
                         : (firstBad ? firstBad.ply : s.moves.length - 1));
@@ -296,7 +288,7 @@ export default function App() {
       setDrill(null);
       setLine(null);
       setExplore(null);
-      setManualBetter(null);
+      setShowBetter(false);
     },
     [session, moves, lastPly, selPly],
   );
@@ -469,7 +461,7 @@ export default function App() {
       if (!rec) return;
       setDrill(null);
       if (kind === "better") {
-        setManualBetter(true);
+        setShowBetter(true);
         setLine({
           baseFen: rec.fenBefore,
           uci: rec.bestPv,
@@ -493,7 +485,7 @@ export default function App() {
         setDrill(null);
         setExplore(null);
         setStep(null);
-        setManualBetter(null);
+        setShowBetter(false);
         setSel(null);
         return;
       }
@@ -504,13 +496,13 @@ export default function App() {
         return;
       }
       if (drill) return;
-      // Better view: the board poses the position before your move. Right
-      // plays your actual move out, left steps back a ply, shift jumps on.
+      // The posed better view (opened from the analysis card): right plays
+      // your actual move out, left steps back a ply, shift jumps on.
       if (showBetter && rec) {
         if (e.key === "ArrowRight" && !e.shiftKey) {
           e.preventDefault();
           setStep(stepFor(rec));
-          setManualBetter(false);
+          setShowBetter(false);
         } else if (e.key === "ArrowLeft" && !e.shiftKey) {
           e.preventDefault();
           jump(selPly - 1);
@@ -605,13 +597,16 @@ export default function App() {
         // Better-plan board (your position before the move): the better move is the story.
         return rec.bestUci ? [arrow(rec.bestUci, "best")] : [];
       }
-      // Position after the played move: first expected reply is colored red when
-      // it hurts (captures a piece or gives check/mate), the rest is the line.
+      // Position after the played move. A graded mistake wears its better move
+      // here: green is what to play instead, red is the reply that punishes.
       const list: Arrow[] = [];
+      const missed = !rec.byEngine && rec.bestUci != null && rec.bestUci !== rec.uci
+        && (rec.badge === "mistake" || rec.badge === "blunder" || rec.badge === "inaccuracy");
+      if (missed && rec.bestUci) list.push(arrow(rec.bestUci, "best"));
       if (rec.pv.length) {
         const firstSan = rec.pvSan[0] ?? "";
         list.push(arrow(rec.pv[0], /x|[+#]/.test(firstSan) ? "threat" : "line"));
-        rec.pv.slice(1, 3).forEach((u) => list.push(arrow(u, "line")));
+        if (!missed) rec.pv.slice(1, 3).forEach((u) => list.push(arrow(u, "line")));
       }
       return list;
     }
@@ -948,7 +943,7 @@ export default function App() {
                 onToggleBetter={() => {
                   // Revealing the actual move plays it out instead of snapping.
                   if (showBetter && rec) setStep(stepFor(rec));
-                  setManualBetter(!showBetter);
+                  setShowBetter(!showBetter);
                 }}
                 onStartLine={openLine}
                 onDrill={startDrill}
