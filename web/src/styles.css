@@ -147,6 +147,13 @@ cg-board {
   background-size: 25% 25%;
 }
 
+/* highlight colors (structure comes from chessground.base.css) */
+cg-board square.last-move { background: rgba(255, 213, 79, 0.55); }
+cg-board square.selected { background: rgba(130, 190, 90, 0.5); }
+cg-board square.check { background: radial-gradient(ellipse at center, rgba(255, 60, 40, 0.9) 0%, rgba(220, 20, 20, 0.55) 45%, rgba(169, 0, 0, 0) 85%); }
+cg-board square.move-dest { background: radial-gradient(rgba(15, 25, 35, 0.28) 21%, rgba(15, 25, 35, 0) 23%); }
+cg-board square.oc.move-dest { background: radial-gradient(rgba(15, 25, 35, 0) 62%, rgba(15, 25, 35, 0.32) 66%); }
+
 cg-board piece { background-size: cover; background-position: center; }
 piece.wp, piece.pawn.white { background-image: url("/pieces/cburnett/wP.svg"); }
 piece.wn, piece.knight.white { background-image: url("/pieces/cburnett/wN.svg"); }
