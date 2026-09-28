@@ -36,12 +36,25 @@ const PRESETS: [number, string][] = [
   [20, "Maximum"],
 ];
 
+const ELO_PRESETS: [number, string][] = [
+  [800, "New"],
+  [1000, "Learning"],
+  [1150, "Your level"],
+  [1400, "Club"],
+  [1750, "Strong"],
+  [2100, "Expert"],
+];
+
 function levelName(skill: number): string {
   if (skill <= 3) return "Beginner";
   if (skill <= 7) return "Casual";
   if (skill <= 12) return "Club";
   if (skill <= 16) return "Strong";
   return "Maximum";
+}
+
+function opponentLabel(s: { opponent: "stockfish" | "maia"; skill: number; elo: number }): string {
+  return s.opponent === "maia" ? `Maia · ${s.elo}` : `Stockfish · Lv ${s.skill}`;
 }
 
 function linePosition(baseFen: string, uci: string[], index: number): { fen: string; last: [string, string] | null } {
@@ -89,6 +102,8 @@ export default function App() {
   const [session, setSession] = useState<GameState | null>(null);
   const [skill, setSkill] = useState(6);
   const [color, setColor] = useState<"white" | "black">("white");
+  const [opponent, setOpponent] = useState<"stockfish" | "maia">("stockfish");
+  const [elo, setElo] = useState(1150);
   const [sel, setSel] = useState<number | null>(null); // null = follow the live game
   const [progress, setProgress] = useState<string | null>(null);
   const [coach, setCoach] = useState<Record<number, string>>({});
@@ -121,7 +136,7 @@ export default function App() {
       stageTimer.current = null;
     }
     try {
-      const s = await api.newGame(skill, color);
+      const s = await api.newGame(skill, color, opponent, elo);
       autoReviewed.current = null;
       setSession(s);
       setSel(null);
@@ -134,7 +149,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [skill, color]);
+  }, [skill, color, opponent, elo]);
 
   const startReview = useCallback(async () => {
     if (!session || progress != null) return;
@@ -395,23 +410,67 @@ export default function App() {
             better line on the board, and mistakes become drills.
           </p>
           <div className="field">
-            <span className="field-label">Level · {levelName(skill)}</span>
+            <span className="field-label">Opponent</span>
             <div className="chips">
-              {PRESETS.map(([value, name]) => (
-                <button key={name} className={skill === value ? "chip chip-on" : "chip"} onClick={() => setSkill(value)}>
-                  {name}
-                </button>
-              ))}
+              <button
+                className={opponent === "stockfish" ? "chip chip-on" : "chip"}
+                onClick={() => setOpponent("stockfish")}
+              >
+                Stockfish
+              </button>
+              <button
+                className={opponent === "maia" ? "chip chip-on" : "chip"}
+                onClick={() => setOpponent("maia")}
+              >
+                Maia · human-like
+              </button>
             </div>
-            <input
-              type="range"
-              min={1}
-              max={20}
-              value={skill}
-              onChange={(e) => setSkill(Number(e.target.value))}
-            />
-            <span className="field-sub">Level {skill}</span>
+            <span className="field-sub">
+              {opponent === "maia"
+                ? "Maia-3 predicts how real players move — mistakes look human, not random."
+                : "Classic engine. Weaker levels slip at random."}
+            </span>
           </div>
+          {opponent === "stockfish" ? (
+            <div className="field">
+              <span className="field-label">Level · {levelName(skill)}</span>
+              <div className="chips">
+                {PRESETS.map(([value, name]) => (
+                  <button key={name} className={skill === value ? "chip chip-on" : "chip"} onClick={() => setSkill(value)}>
+                    {name}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={20}
+                value={skill}
+                onChange={(e) => setSkill(Number(e.target.value))}
+              />
+              <span className="field-sub">Level {skill}</span>
+            </div>
+          ) : (
+            <div className="field">
+              <span className="field-label">Strength · {elo} Elo</span>
+              <div className="chips">
+                {ELO_PRESETS.map(([value, name]) => (
+                  <button key={name} className={elo === value ? "chip chip-on" : "chip"} onClick={() => setElo(value)}>
+                    {name}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="range"
+                min={600}
+                max={2600}
+                step={50}
+                value={elo}
+                onChange={(e) => setElo(Number(e.target.value))}
+              />
+              <span className="field-sub">{elo} Elo</span>
+            </div>
+          )}
           <div className="field">
             <span className="field-label">Color</span>
             <div className="chips">
@@ -445,7 +504,7 @@ export default function App() {
     <div className="app">
       <header>
         <span className="brand">Chess</span>
-        <span className="chip subtle">Stockfish · Lv {session.skill}</span>
+        <span className="chip subtle">{opponentLabel(session)}</span>
         {v && <span className={`pill ${v.tone}`}>{v.text}</span>}
         {session.opening && (
           <span className="opening">

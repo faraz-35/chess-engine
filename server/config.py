@@ -20,6 +20,8 @@ def _load_env() -> None:
 _load_env()
 
 STOCKFISH_PATH = os.environ.get("STOCKFISH_PATH", "/opt/homebrew/bin/stockfish")
+MAIA3_UCI = os.environ.get("MAIA3_UCI", str(ROOT / ".venv" / "bin" / "maia3-uci"))
+MAIA3_MODEL = os.environ.get("MAIA3_MODEL", "maia3-79m")
 GAMES_DIR = ROOT / "games"
 LOG_DIR = ROOT / "logs"
 WEB_DIST = ROOT / "web" / "dist"

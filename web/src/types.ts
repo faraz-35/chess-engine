@@ -41,6 +41,8 @@ export interface GameState {
   turn: "white" | "black";
   playerColor: "white" | "black";
   skill: number;
+  opponent: "stockfish" | "maia";
+  elo: number;
   status: "playing" | "finished";
   result: string | null;
   resigned: boolean;

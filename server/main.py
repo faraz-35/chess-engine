@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import coach, quality
+from . import engine as engine_module
 from .config import GAMES_DIR, LOG_DIR, STOCKFISH_PATH, WEB_DIST
 from .engine import Engines
 from .openings import Openings
@@ -61,6 +62,8 @@ def session_or_404(sid: str) -> Session:
 class NewIn(BaseModel):
     skill: int = 6
     color: str = "white"
+    opponent: str = "stockfish"
+    elo: int = 1150
 
 
 class MoveIn(BaseModel):
@@ -87,21 +90,28 @@ def _startup() -> None:
 @app.get("/api/health")
 def health():
     return {"ok": True, "stockfish": STOCKFISH_PATH,
-            "openings": _book.count if _book else 0, "coach": coach.available()}
+            "openings": _book.count if _book else 0, "coach": coach.available(),
+            "maia": engine_module.maia_available()}
 
 
 @app.post("/api/new")
 def new_game(body: NewIn):
     if body.color not in ("white", "black"):
         raise HTTPException(400, "color must be white or black")
+    if body.opponent not in ("stockfish", "maia"):
+        raise HTTPException(400, "opponent must be stockfish or maia")
     if not 1 <= body.skill <= 20:
         raise HTTPException(400, "skill must be 1-20")
+    if not 600 <= body.elo <= 2600:
+        raise HTTPException(400, "elo must be 600-2600")
     session = Session(secrets.token_hex(4), body.skill,
-                      chess.WHITE if body.color == "white" else chess.BLACK, book())
+                      chess.WHITE if body.color == "white" else chess.BLACK, book(),
+                      opponent=body.opponent, elo=body.elo)
     _sessions[session.id] = session
     if body.color == "black":
         session.engine_opens(engines())
-    log.info("new game %s skill=%d color=%s", session.id, body.skill, body.color)
+    log.info("new game %s skill=%d color=%s opponent=%s elo=%d",
+             session.id, body.skill, body.color, body.opponent, body.elo)
     return session.payload()
 
 

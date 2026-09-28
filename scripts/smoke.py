@@ -84,6 +84,17 @@ def main() -> int:
     state = client.post(f"/api/resign/{black_game['id']}").json()
     check("resign finishes the game", state["status"] == "finished" and state["result"] == "1-0")
 
+    if health.get("maia"):
+        maia = client.post("/api/new", json={"skill": 6, "color": "white", "opponent": "maia", "elo": 1150}).json()
+        check("maia game starts", maia.get("opponent") == "maia")
+        maia = client.post("/api/move", json={"sid": maia["id"], "uci": "e2e4"}).json()
+        reply = maia["moves"][-1]
+        check("maia replies", reply["byEngine"] is True and maia["status"] == "playing",
+              f"maia played {reply['san']}")
+        check("maia game still analyses", reply["evalCp"] is not None)
+    else:
+        print("SKIP maia — maia3-uci not installed")
+
     page = client.get("/")
     check("ui served", page.status_code == 200 and "root" in page.text)
 

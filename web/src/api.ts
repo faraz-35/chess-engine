@@ -14,7 +14,8 @@ async function post<T>(url: string, body?: unknown): Promise<T> {
 }
 
 export const api = {
-  newGame: (skill: number, color: string) => post<GameState>("/api/new", { skill, color }),
+  newGame: (skill: number, color: string, opponent: string, elo: number) =>
+    post<GameState>("/api/new", { skill, color, opponent, elo }),
 
   move: (sid: string, uci: string) => post<GameState>("/api/move", { sid, uci }),
 

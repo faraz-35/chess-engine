@@ -94,10 +94,13 @@ def _san_line(board: chess.Board, pv_uci: list[str]) -> list[str]:
 
 
 class Session:
-    def __init__(self, sid: str, skill: int, player_color: chess.Color, book: Openings):
+    def __init__(self, sid: str, skill: int, player_color: chess.Color, book: Openings,
+                 opponent: str = "stockfish", elo: int = 1150):
         self.id = sid
         self.skill = skill
         self.player_color = player_color
+        self.opponent = opponent
+        self.elo = elo
         self.board = chess.Board()
         self.moves: list[MoveRec] = []
         self.opening = None
@@ -170,8 +173,7 @@ class Session:
     def _engine_reply(self, engines) -> None:
         if self.board.is_game_over() or self.result:
             return
-        engines.set_skill(self.skill)
-        reply = engines.play_move(self.board, PLAY_MOVETIME)
+        reply = engines.play_opponent(self.board, self.opponent, self.skill, self.elo)
         if reply is None:
             return
         mover = self.board.turn
@@ -322,6 +324,8 @@ class Session:
             "turn": "white" if self.board.turn else "black",
             "playerColor": "white" if self.player_color else "black",
             "skill": self.skill,
+            "opponent": self.opponent,
+            "elo": self.elo,
             "status": "finished" if finished else "playing",
             "result": self.result,
             "resigned": self.resigned,
@@ -354,9 +358,10 @@ class Session:
 
     def _save_pgn(self) -> None:
         game = chess.pgn.Game()
-        opponent = f"Stockfish-{self.skill}"
+        opponent = (f"Stockfish-{self.skill}" if self.opponent == "stockfish"
+                    else f"Maia3-{self.elo}")
         game.headers.update({
-            "Event": f"chess-engine local, level {self.skill}",
+            "Event": f"chess-engine local vs {opponent}",
             "Site": "localhost:8790",
             "Date": self.created.strftime("%Y.%m.%d"),
             "White": "Faraz" if self.player_color == chess.WHITE else opponent,
