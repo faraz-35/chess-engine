@@ -14,6 +14,8 @@ Play chess on your Mac against Stockfish or Maia, and learn from every game.
 
 ## Run
 
+macOS (Homebrew):
+
     brew install stockfish
     python3 -m venv .venv
     .venv/bin/pip install -r requirements.txt
@@ -22,10 +24,29 @@ Play chess on your Mac against Stockfish or Maia, and learn from every game.
     cd web && npm install && cd ..
     ./run.sh          # builds the UI once, then serves http://127.0.0.1:8790
 
+Linux (Arch/Omarchy — `sudo pacman -S stockfish python nodejs`; Debian/Ubuntu: `apt install stockfish python3 python3-venv nodejs npm`):
+
+    python3 -m venv .venv
+    .venv/bin/pip install -r requirements.txt
+    git clone https://github.com/CSSLab/maia3.git vendor/maia3   # optional, for the Maia opponent
+    .venv/bin/pip install ./vendor/maia3                         # pulls torch
+    cd web && npm install && cd ..
+    ./run.sh
+
+The server finds `stockfish` on your PATH; set `STOCKFISH_PATH` if it lives elsewhere.
+
 The Maia weights (~300MB) download from Hugging Face on first use and cache in
 `~/.cache/huggingface/`. Without the maia3 package the Stockfish opponent still works.
 
 Games save as PGN in `games/` (your moves annotated). Server log: `logs/server.log`.
+
+## Hardware
+
+Runs fine on any laptop with 8GB RAM. All-in, the app uses about 1.5GB: the server
+(~80MB), the playing engine (~200MB), the analysis engine (~550MB during review),
+and Maia (~450MB) if installed. The UI is served by the server itself — only one
+process tree, no database. Everything runs locally; nothing leaves the machine
+except the optional Coach sentences (Gemini API) and the one-time Maia download.
 
 The Gemini key lives in `.env` (GOOGLE_API_KEY). Without it everything else still works.
 
