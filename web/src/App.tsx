@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chess } from "chess.js";
-import Board, { type Arrow } from "./Board";
+import Board, { type Arrow, type StepMove } from "./Board";
 import EvalBar from "./EvalBar";
 import EvalGraph from "./EvalGraph";
 import GameEnd from "./GameEnd";
@@ -125,6 +125,7 @@ export default function App() {
   const [drill, setDrill] = useState<Drill | null>(null);
   const [line, setLine] = useState<LineState | null>(null);
   const [explore, setExplore] = useState<{ fen: string; result: ExploreResult } | null>(null);
+  const [step, setStep] = useState<StepMove | null>(null);
   const exploreCache = useRef<Map<string, ExploreResult>>(new Map());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [busy, setBusy] = useState(false);
@@ -200,6 +201,7 @@ export default function App() {
       const firstBad = s.moves.find(
         (m) => !m.byEngine && (m.badge === "mistake" || m.badge === "blunder"),
       );
+      setStep(null);
       setSel(firstBad ? firstBad.ply : s.moves.length - 1);
     } catch (e) {
       notify(String(e));
@@ -219,12 +221,26 @@ export default function App() {
   const jump = useCallback(
     (ply: number) => {
       if (!session || !moves.length) return;
-      setSel(Math.max(0, Math.min(session.moves.length - 1, ply)));
+      const target = Math.max(0, Math.min(session.moves.length - 1, ply));
+      // Stepping exactly one ply forward animates the move on the board;
+      // landing on the live position returns to the real game.
+      if (target === selPly + 1 && moves[target]) {
+        const next = moves[target];
+        setStep({
+          fen: next.fenAfter,
+          preFen: target > 0 ? moves[target - 1].fenAfter : "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+          from: next.uci.slice(0, 2),
+          to: next.uci.slice(2, 4),
+        });
+      } else {
+        setStep(null);
+      }
+      setSel(target >= lastPly ? null : target);
       setDrill(null);
       setLine(null);
       setExplore(null);
     },
-    [session, moves.length],
+    [session, moves, lastPly, selPly],
   );
 
   const badPlies = useMemo(
@@ -271,9 +287,13 @@ export default function App() {
         }
         return;
       }
-      if (session.status === "playing") {
+      // Real game moves only when following the live position; browsing history
+      // (sel != null) turns the board into a tangent analysis branch — the game
+      // record is untouched and Esc or → returns to the live position.
+      if (session.status === "playing" && sel == null) {
         setBusy(true);
         setSel(null);
+        setStep(null);
         setLine(null);
         setExplore(null);
         try {
@@ -405,13 +425,16 @@ export default function App() {
     [rec],
   );
 
-  // Keyboard: arrows navigate, shift+arrows jump between your mistakes, Esc backs out.
+  // Keyboard: arrows navigate, shift+arrows jump between your mistakes, Esc
+  // backs out of lines and returns to the live game from history.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setLine(null);
         setDrill(null);
         setExplore(null);
+        setStep(null);
+        setSel(null);
         return;
       }
       if (!session || !moves.length || reviewing) return;
@@ -519,18 +542,20 @@ export default function App() {
       const pos = linePosition(line.baseFen, line.uci, line.index);
       return { fen: pos.fen, last: pos.last, dests: destsFromFen(pos.fen), check: new Chess(pos.fen).isCheck() };
     }
-    const atLive = rec != null && rec.ply === lastPly && session.status === "playing";
+    const atLive = rec != null && rec.ply === lastPly && session.status === "playing" && sel == null;
     if (rec) {
-      const over = session.status === "finished";
+      // Any browsed position is a tangent board: moves for either side are
+      // allowed there and only land in the scratch branch.
+      const browsing = sel != null || session.status === "finished";
       return {
         fen: rec.fenAfter,
         last: [rec.uci.slice(0, 2), rec.uci.slice(2, 4)] as [string, string],
-        dests: over ? destsFromFen(rec.fenAfter) : atLive ? session.dests : {},
+        dests: browsing ? destsFromFen(rec.fenAfter) : atLive ? session.dests : {},
         check: atLive ? session.check : new Chess(rec.fenAfter).isCheck(),
       };
     }
     return { fen: session.fen, last: session.lastMove, dests: session.dests, check: session.check };
-  }, [session, drill, line, rec, lastPly]);
+  }, [session, drill, line, rec, lastPly, sel]);
 
   const tabsNav = (
     <nav className="tabs">
@@ -675,13 +700,16 @@ export default function App() {
   const graphEvals = moves.map((m) =>
     m.evalCp == null ? null : session.playerColor === "black" ? -m.evalCp : m.evalCp,
   );
+  const browsingLive = sel != null && !finished && !reviewing;
   const statusText = reviewing
     ? progress
     : finished
       ? v!.text
-      : session.turn === session.playerColor
-        ? "Your move"
-        : "Stockfish is thinking…";
+      : browsingLive
+        ? `Viewing ${rec ? moveLabel(rec) : "history"} — moves here are a tangent`
+        : session.turn === session.playerColor
+          ? "Your move"
+          : "Stockfish is thinking…";
 
   return (
     <div className="app">
@@ -752,6 +780,7 @@ export default function App() {
               orientation={session.playerColor}
               check={board.check}
               arrows={arrows}
+              step={step}
               onMove={play}
             />
           </div>
@@ -794,8 +823,13 @@ export default function App() {
             </div>
           ) : (
             <div className="under-board">
-              <span className={"turn-dot" + (finished ? " done" : session.turn === session.playerColor ? " you" : "")} />
+              <span className={"turn-dot" + (finished || browsingLive ? " done" : session.turn === session.playerColor ? " you" : "")} />
               <span className="status-text">{statusText}</span>
+              {browsingLive && (
+                <button className="return-btn" onClick={() => { setSel(null); setStep(null); }}>
+                  Return to game
+                </button>
+              )}
               <span className="spacer" />
               <span className="kbd-hints">← → moves · ⇧←→ your mistakes · Esc back</span>
             </div>

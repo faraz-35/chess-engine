@@ -12,6 +12,14 @@ export interface Arrow {
 type CgApi = ReturnType<typeof Chessground>;
 type CgSetConfig = Parameters<CgApi["set"]>[0];
 type CgShape = Parameters<CgApi["setShapes"]>[0][number];
+type CgKey = Parameters<CgApi["move"]>[0];
+
+export interface StepMove {
+  fen: string;   // the position AFTER the move (must equal props.fen to apply)
+  preFen: string; // the position BEFORE it
+  from: string;
+  to: string;
+}
 
 interface Props {
   fen: string;
@@ -20,6 +28,7 @@ interface Props {
   orientation: "white" | "black";
   check: boolean;
   arrows: Arrow[];
+  step?: StepMove | null;
   onMove?: (uci: string) => void;
 }
 
@@ -70,7 +79,7 @@ export default function Board(props: Props) {
     const api = apiRef.current;
     if (!api || signature === appliedRef.current) return;
     appliedRef.current = signature;
-    api.set({
+    const baseConfig = {
       fen: props.fen,
       turnColor: turnColor(props.fen),
       check: props.check ? true : undefined,
@@ -83,7 +92,21 @@ export default function Board(props: Props) {
         showDests: true,
         events: { after: (orig: string, dest: string) => moveRef.current?.(orig + dest) },
       },
-    } as unknown as CgSetConfig);
+    } as unknown as CgSetConfig;
+    // Stepping one move forward: show the position before it, then play the
+    // move out so the piece visibly travels from its origin square.
+    if (props.step && props.step.fen === props.fen) {
+      api.set({ ...baseConfig, fen: props.step.preFen, check: undefined, lastMove: undefined });
+      window.setTimeout(() => {
+        apiRef.current?.move(props.step!.from as CgKey, props.step!.to as CgKey);
+        apiRef.current?.set({
+          lastMove: [props.step!.from, props.step!.to] as [string, string],
+          check: props.check ? true : undefined,
+        } as unknown as CgSetConfig);
+      }, 30);
+      return;
+    }
+    api.set(baseConfig);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
 
