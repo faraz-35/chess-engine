@@ -296,7 +296,10 @@ class Session:
             fields["best_pv_san"] = _san_line(board_before, best_pv)
         else:
             fields["best_pv"], fields["best_pv_san"] = [], []
-        if badge in ("mistake", "blunder") and pre:
+        # Reasons are computed for every non-book player move, not just errors:
+        # in a lost position a piece concession grades "good" (the eval barely
+        # moves), but "the rook on d2 can be taken" is still the lesson.
+        if badge not in ("best", "book") and pre:
             found = quality.reason_text(board_before, board_after, mover, pre[0], fields["pv"], post_cp)
             if found is not None:
                 fields["reason_key"], fields["reason"] = found
