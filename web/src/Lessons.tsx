@@ -38,6 +38,14 @@ export default function Lessons() {
   const [steps, setSteps] = useState<Step[]>([]);
   const [idx, setIdx] = useState(-1); // -1 = starting position
   const [query, setQuery] = useState("");
+  const [side, setSide] = useState<"white" | "black">(() =>
+    localStorage.getItem("lessonsSide") === "black" ? "black" : "white",
+  );
+
+  const pickSide = (s: "white" | "black") => {
+    localStorage.setItem("lessonsSide", s);
+    setSide(s);
+  };
 
   useEffect(() => {
     fetch("/openings/tree.json")
@@ -51,7 +59,7 @@ export default function Lessons() {
     const out: NamedEntry[] = [];
     const walk = (node: BookNode, path: string[]) => {
       const next = [...path, node.u];
-      out.push({ eco: node.e, name: node.n, path: next });
+      if (node.n) out.push({ eco: node.e, name: node.n, path: next }); // engine-tail nodes are unnamed
       for (const child of node.c ?? []) walk(child, next);
     };
     for (const child of book.c ?? []) walk(child, []);
@@ -76,7 +84,7 @@ export default function Lessons() {
     let text = "";
     for (let i = 0; i <= Math.min(idx, steps.length - 1); i++) {
       const node = steps[i].node;
-      if (node) text = `${node.e} ${node.n}`;
+      if (node?.n) text = `${node.e} ${node.n}`; // tail nodes are unnamed — the name stays at the book
     }
     return text || null;
   }, [steps, idx]);
@@ -154,6 +162,9 @@ export default function Lessons() {
   const branches = idx >= 0 ? steps[idx]?.node?.c ?? [] : [];
   const last: [string, string] | null = cur ? [cur.uci.slice(0, 2), cur.uci.slice(2, 4)] : null;
   const arrows: Arrow[] = branches.slice(0, 6).map((c) => arrow(c.u, "book"));
+  // Past the book: the current position came from an engine continuation, so
+  // the moves offered here are engine lines, not theory.
+  const onTail = idx >= 0 && !steps[idx]?.node?.n;
 
   return (
     <div className="page lessons">
@@ -163,7 +174,7 @@ export default function Lessons() {
             fen={pos.fen}
             dests={destsFromFen(pos.fen)}
             lastMove={last}
-            orientation="white"
+            orientation={side}
             check={pos.check}
             arrows={arrows}
             onMove={go}
@@ -190,7 +201,12 @@ export default function Lessons() {
               <button onClick={() => setIdx((i) => Math.min(steps.length - 1, i + 1))} disabled={idx >= steps.length - 1}>→</button>
               <button onClick={() => { setSteps([]); setIdx(-1); }}>Start</button>
               {branches.map((c) => (
-                <button key={c.u} className="branch" title={c.n} onClick={() => go(c.u)}>
+                <button
+                  key={c.u}
+                  className={"branch" + (onTail ? " tail" : "")}
+                  title={c.n}
+                  onClick={() => go(c.u)}
+                >
                   {c.m}
                 </button>
               ))}
@@ -198,6 +214,14 @@ export default function Lessons() {
           )}
         </div>
         <aside className="panel">
+          <div className="chips">
+            <button className={side === "white" ? "chip chip-on" : "chip"} onClick={() => pickSide("white")}>
+              White
+            </button>
+            <button className={side === "black" ? "chip chip-on" : "chip"} onClick={() => pickSide("black")}>
+              Black
+            </button>
+          </div>
           <input
             className="lesson-search"
             placeholder="Find an opening"
