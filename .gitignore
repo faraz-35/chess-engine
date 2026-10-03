@@ -7,3 +7,4 @@ games/
 .env
 vendor/
 games-test/
+data/openings/tail-cache.json
