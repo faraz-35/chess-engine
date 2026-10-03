@@ -75,7 +75,7 @@ export const REASON_LABEL: Record<string, string> = {
 
 export const MATE = 100_000;
 
-/** Arrow scheme: one meaning per color, shown in the legend under the graph. */
+/** Arrow scheme: one meaning per color. */
 export const ARROW_COLORS: Record<"best" | "threat" | "line" | "book", string> = {
   best: "#22c55e",   // the move you should have played
   threat: "#ef4444", // the opponent's best reply when it takes your piece or checks

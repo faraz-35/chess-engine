@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chess } from "chess.js";
 import Board, { type Arrow, type StepMove } from "./Board";
+import Captured from "./Captured";
 import EvalBar from "./EvalBar";
 import EvalGraph from "./EvalGraph";
 import GameEnd from "./GameEnd";
@@ -14,8 +15,8 @@ import { api, type ExploreResult, type GameSummary } from "./api";
 import { arrow, destsFromFen } from "./boardUtils";
 import { fmtEval, moveLabel } from "./format";
 import { loadSettings, saveSettings, type AppSettings } from "./settings";
-import { sfx } from "./sound";
-import { BADGE, ARROW_COLORS, type Badge, type GameState, type MoveRec } from "./types";
+import { sfx, setVolume } from "./sound";
+import { BADGE, type Badge, type GameState, type MoveRec } from "./types";
 
 type Route = "play" | "practice" | "progress" | "settings";
 
@@ -93,16 +94,9 @@ function verdict(s: GameState): { text: string; tone: "win" | "lose" | "draw" } 
   return won ? { text: "You won.", tone: "win" } : { text: "You lost.", tone: "lose" };
 }
 
-function recSound(rec: MoveRec, on: boolean) {
-  if (!on) return;
-  if (rec.san.includes("#")) return;
-  if (rec.san.includes("+")) sfx.check();
-  else if (rec.san.includes("x")) sfx.capture();
-  else sfx.move();
-}
+// Every move sounds the same: one thump, checks and captures included.
 
-function endSound(s: GameState, on: boolean) {
-  if (!on) return;
+function endSound(s: GameState) {
   const v = verdict(s);
   (v.tone === "win" ? sfx.win : v.tone === "lose" ? sfx.lose : sfx.draw)();
 }
@@ -130,6 +124,7 @@ export default function App() {
       return next;
     });
   }, []);
+  useEffect(() => setVolume(settings.volume), [settings.volume]);
   const [drill, setDrill] = useState<Drill | null>(null);
   const [line, setLine] = useState<LineState | null>(null);
   const [showBetter, setShowBetter] = useState(false); // pose the position before your move
@@ -351,8 +346,8 @@ export default function App() {
           const last = next.moves[next.moves.length - 1];
           if (!last?.byEngine) {
             // my move ended the game — show it directly
-            recSound(last, settings.soundOn);
-            endSound(next, settings.soundOn);
+            sfx.move();
+            endSound(next);
             setSession(next);
             setBusy(false);
             return;
@@ -368,13 +363,13 @@ export default function App() {
             turn: engineTurn,
             check: new Chess(mine.fenAfter).isCheck(),
           });
-          recSound(mine, settings.soundOn);
+          sfx.move();
           // Stage 2: after a beat, the reply arrives and the piece animates from its square.
           if (stageTimer.current != null) window.clearTimeout(stageTimer.current);
           stageTimer.current = window.setTimeout(() => {
             stageTimer.current = null;
-            recSound(last, settings.soundOn);
-            endSound(next, settings.soundOn);
+            sfx.move();
+            endSound(next);
             setSession(next);
             setBusy(false);
           }, 550);
@@ -415,7 +410,7 @@ export default function App() {
         notify("That move is not legal here.");
         return;
       }
-      recSound({ san: played.san } as MoveRec, settings.soundOn);
+      sfx.move();
       setLine({
         baseFen,
         uci: [...branch, uci],
@@ -424,7 +419,7 @@ export default function App() {
         label: line ? "Exploring" : `Exploring after ${moveLabel(rec!)}`,
       });
     },
-    [session, busy, drill, settings.soundOn, sel, line, rec],
+    [session, busy, drill, settings.volume, sel, line, rec],
   );
 
   const resign = useCallback(async () => {
@@ -793,6 +788,8 @@ export default function App() {
   }
 
   const v = finished ? verdict(session) : null;
+  const inReview = session.reviewed;
+  const barShown = inReview ? settings.evalBarReview : settings.evalBar;
   const exploringHere = explore != null && explore.fen === displayFen && explore.result.evalCp != null;
   const whiteCp = exploringHere
     ? (explore!.result.evalCp as number)               // explore evals are already white POV
@@ -856,9 +853,10 @@ export default function App() {
 
       {route === "play" && (
       <main>
-        <section className="board-area">
+        <section className={"board-area" + (barShown ? "" : " no-bar")}>
+          <Captured fen={board.fen} side={session.playerColor === "white" ? "black" : "white"} />
           <div className="board-row">
-            {settings.evalBar && <EvalBar cp={whiteCp} orientation={session.playerColor} />}
+            {barShown && <EvalBar cp={whiteCp} orientation={session.playerColor} />}
             <Board
               fen={board.fen}
               dests={board.dests}
@@ -870,6 +868,7 @@ export default function App() {
               onMove={play}
             />
           </div>
+          <Captured fen={board.fen} side={session.playerColor} />
           {line ? (
             <div className="linebar">
               <b>{line.label}</b>
@@ -919,16 +918,17 @@ export default function App() {
                   Return to game
                 </button>
               )}
-              <span className="spacer" />
-              <span className="kbd-hints">← → moves · ⇧←→ your mistakes · Esc back</span>
             </div>
           )}
         </section>
 
         <aside className="panel">
-          <span className="section-label">Evaluation</span>
-          <EvalGraph evals={graphEvals} index={selPly} markers={session.reviewed ? badPlies : []} onJump={jump} />
-          <Legend />
+          {(inReview ? settings.evalGraphReview : settings.evalGraph) && (
+            <>
+              <span className="section-label">Evaluation</span>
+              <EvalGraph evals={graphEvals} index={selPly} markers={session.reviewed ? badPlies : []} onJump={jump} />
+            </>
+          )}
           {session.summary && <SummaryCard summary={session.summary} onJump={jump} />}
           {keyRec && (
             <>
@@ -950,8 +950,12 @@ export default function App() {
               />
             </>
           )}
-          <span className="section-label">Moves</span>
-          <MoveList moves={moves} activePly={selPly} onJump={jump} showGrades={settings.liveGrades && (session.reviewed || !finished)} />
+          {(inReview ? settings.movesListReview : settings.movesList) && (
+            <>
+              <span className="section-label">Moves</span>
+              <MoveList moves={moves} activePly={selPly} onJump={jump} showGrades={settings.liveGrades && (session.reviewed || !finished)} />
+            </>
+          )}
         </aside>
       </main>
       )}
@@ -971,29 +975,6 @@ export default function App() {
           <div key={t.id} className={"toast " + t.tone}>{t.text}</div>
         ))}
       </div>
-    </div>
-  );
-}
-
-const LEGEND: [keyof typeof ARROW_COLORS, string][] = [
-  ["best", "your best move"],
-  ["threat", "their threat"],
-  ["line", "engine line"],
-  ["book", "opening"],
-];
-
-function Legend() {
-  return (
-    <div className="legend">
-      {LEGEND.map(([name, label]) => (
-        <span key={name}>
-          <svg width="20" height="10" viewBox="0 0 20 10">
-            <line x1="1" y1="5" x2="12" y2="5" stroke={ARROW_COLORS[name]} strokeWidth="4" strokeLinecap="round" />
-            <polygon points="11,1 19,5 11,9" fill={ARROW_COLORS[name]} />
-          </svg>
-          {label}
-        </span>
-      ))}
     </div>
   );
 }

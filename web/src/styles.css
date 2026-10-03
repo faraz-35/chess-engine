@@ -216,7 +216,6 @@ piece.bk, piece.king.black { background-image: url("/pieces/cburnett/bK.svg"); }
 .turn-dot.done { background: var(--faint); animation: none; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .status-text { color: var(--dim); font-size: 13px; }
-.kbd-hints { color: var(--faint); font-size: 11px; }
 
 .linebar {
   display: flex;
@@ -285,8 +284,31 @@ piece.bk, piece.king.black { background-image: url("/pieces/cburnett/bK.svg"); }
 .eval-dot { fill: #fff; stroke: var(--accent); stroke-width: 0.5; }
 .eval-marker { fill: var(--red); opacity: 0.9; }
 
-.legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--faint); }
-.legend span { display: flex; align-items: center; gap: 5px; }
+/* ---------- captured pieces ---------- */
+
+.captured {
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+  width: min(calc(100vh - 200px), 620px);
+  margin-left: 30px; /* clears the eval bar, like .under-board */
+}
+.captured img { width: 18px; height: 18px; margin-right: -3px; }
+/* Black pieces vanish on the dark page — rim them in white. */
+.captured img.dark {
+  filter:
+    drop-shadow(1px 0 0 rgba(232, 236, 244, 0.6))
+    drop-shadow(-1px 0 0 rgba(232, 236, 244, 0.6))
+    drop-shadow(0 1px 0 rgba(232, 236, 244, 0.6))
+    drop-shadow(0 -1px 0 rgba(232, 236, 244, 0.6));
+}
+.captured span { color: var(--dim); font-size: 12px; margin-left: 10px; font-variant-numeric: tabular-nums; }
+
+/* Without the eval bar nothing sits left of the board, so the 30px offset goes. */
+.board-area.no-bar .captured,
+.board-area.no-bar .under-board,
+.board-area.no-bar .linebar,
+.board-area.no-bar .drill { margin-left: 0; }
 
 /* ---------- summary ---------- */
 
@@ -533,6 +555,9 @@ button.danger { border-color: var(--red); color: var(--red); }
 .setting-text b { font-size: 13.5px; font-weight: 600; }
 .setting-text em { font-style: normal; color: var(--dim); font-size: 12px; }
 .setting-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex: none; }
+.setting-volume { display: flex; align-items: center; gap: 8px; flex: none; }
+.setting-volume input[type="range"] { width: 140px; accent-color: var(--accent); cursor: pointer; }
+.setting-volume span { width: 36px; text-align: right; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
 
 .game-row.clickable { width: 100%; text-align: left; background: none; border: none; border-bottom: 1px solid var(--border-soft); border-radius: 0; padding: 8px 0; }
 .game-row.clickable:last-child { border-bottom: none; }
