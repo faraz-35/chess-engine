@@ -6,6 +6,7 @@ import EvalBar from "./EvalBar";
 import EvalGraph from "./EvalGraph";
 import GameEnd from "./GameEnd";
 import KeyCard from "./KeyCard";
+import Lessons from "./Lessons";
 import MoveList from "./MoveList";
 import Practice from "./Practice";
 import Progress from "./Progress";
@@ -18,11 +19,11 @@ import { loadSettings, saveSettings, type AppSettings } from "./settings";
 import { sfx, setVolume } from "./sound";
 import { BADGE, type Badge, type GameState, type MoveRec } from "./types";
 
-type Route = "play" | "practice" | "progress" | "settings";
+type Route = "play" | "lessons" | "practice" | "progress" | "settings";
 
 function currentRoute(): Route {
   const hash = window.location.hash.replace("#/", "");
-  return ["practice", "progress", "settings"].includes(hash) ? (hash as Route) : "play";
+  return ["lessons", "practice", "progress", "settings"].includes(hash) ? (hash as Route) : "play";
 }
 
 interface Drill {
@@ -484,6 +485,7 @@ export default function App() {
         setSel(null);
         return;
       }
+      if (route !== "play") return; // Lessons owns its own keys
       if (!session || !moves.length) return;
       if (line) {
         if (e.key === "ArrowRight") setLine((l) => (l && l.index < l.uci.length - 1 ? { ...l, index: l.index + 1 } : l));
@@ -512,7 +514,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [session, moves.length, reviewing, line, drill, selPly, showBetter, jump, stepMistake]);
+  }, [route, session, moves.length, reviewing, line, drill, selPly, showBetter, jump, stepMistake]);
 
   // Coach sentences are in-play feedback or post-review analysis — never
   // pushed while simply browsing an unreviewed game.
@@ -636,7 +638,7 @@ export default function App() {
 
   const tabsNav = (
     <nav className="tabs">
-      {([["play", "Play"], ["practice", "Practice"], ["progress", "Progress"], ["settings", "Settings"]] as [Route, string][]).map(
+      {([["play", "Play"], ["lessons", "Lessons"], ["practice", "Practice"], ["progress", "Progress"], ["settings", "Settings"]] as [Route, string][]).map(
         ([key, label]) => (
           <button key={key} className={route === key ? "tab on" : "tab"} onClick={() => goto(key)}>
             {label}
@@ -659,6 +661,7 @@ export default function App() {
             </span>
           )}
         </header>
+        {route === "lessons" && <Lessons />}
         {route === "practice" && <Practice orientation={session?.playerColor ?? color} />}
         {route === "progress" && <Progress onPractice={() => goto("practice")} onOpenGame={openGame} />}
         {route === "settings" && <SettingsPage settings={settings} onChange={updateSetting} />}
