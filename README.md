@@ -2,6 +2,10 @@
 
 Play chess on your Mac against Stockfish or Maia, and learn from every game.
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="A game in progress: the board, the eval graph, and move 5 graded Excellent with the better plan" width="100%">
+</p>
+
 - Board at localhost:8790. Pick an opponent, a strength, and a color.
 - **Stockfish** (levels 1-20) plays sharp engine moves; weak levels slip at random.
 - **Maia-3** (600-2600 Elo) is trained to move like real humans at that rating — its mistakes look like yours, which makes it the better sparring partner.
